@@ -36,6 +36,7 @@ Nếu hai nguồn cùng mức ưu tiên vẫn mâu thuẫn, dừng thay đổi l
 | [04 — Thiết kế đích V2](./04-v2-target-design.md) | 12 workflow, hợp đồng chung, sheet đích và các diagram |
 | [05 — Runbook vận hành](./05-operations-runbook.md) | Cấu hình n8n/Google Sheets, xử lý lỗi, backup, triển khai và rollback |
 | [06 — Việc cần làm tiếp theo](./06-next-steps.md) | Lộ trình Ask Matt từ tài liệu này đến spec, ticket và triển khai |
+| [07 — Handoff issue #2](./07-issue-2-agent-handoff.md) | Tiến độ, kiểm thử, artifact và việc còn lại cho agent tiếp theo |
 | [Đặc tả V2](../specs/kiem-ke-bia-v2.md) | User stories, quyết định triển khai, kiểm thử và tiêu chí nghiệm thu |
 
 ## Quy tắc cập nhật bộ tài liệu
