@@ -31,6 +31,7 @@ test('formats a global status using configurable message keys only', () => {
     gatewayResult: {
       ok: true,
       response: {
+        gateway_health: 'OK',
         config_version: 'v1',
         active_branch_count: 1,
         active_branches: [{ branch_id: 'CN_HN', branch_name: 'Chi nhánh Hà Nội' }],
@@ -40,6 +41,7 @@ test('formats a global status using configurable message keys only', () => {
     tables,
   });
   assert.match(result.text, /Cấu hình: v1/);
+  assert.match(result.text, /Config Gateway: OK/);
   assert.match(result.text, /Chi nhánh hoạt động: 1/);
   assert.doesNotMatch(result.text, /forum_chat_id|owner_chat_id|token|credential|normalized_config_json/);
 });

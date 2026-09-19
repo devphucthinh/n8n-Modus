@@ -94,6 +94,7 @@ export function validConfig() {
       ['message_key', 'message_text', 'locale', 'trang_thai'],
       [
         ['STATUS_HEADER', 'Trạng thái Kiểm kê bia V2', 'vi-VN', 'ACTIVE'],
+        ['STATUS_GATEWAY_HEALTH_LINE', 'Config Gateway: {gateway_health}', 'vi-VN', 'ACTIVE'],
         ['STATUS_CONFIG_LINE', 'Cấu hình: {config_version}', 'vi-VN', 'ACTIVE'],
         ['STATUS_BRANCH_COUNT_LINE', 'Chi nhánh hoạt động: {active_branch_count}', 'vi-VN', 'ACTIVE'],
         ['STATUS_BRANCH_LINE', '- {branch_name} ({branch_id})', 'vi-VN', 'ACTIVE'],

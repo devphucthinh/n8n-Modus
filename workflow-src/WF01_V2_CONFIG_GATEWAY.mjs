@@ -20,3 +20,27 @@ const tables = Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GL
 return [{ json: { envelope: triggerInput.envelope ?? triggerInput, tables } }];
 `);
 }
+
+export function planRowCode(index) {
+  return codeNode(`
+const result = $('Evaluate Config Gateway').first()?.json ?? {};
+const entry = result.write_plan?.[${index}];
+if (!entry) return [];
+const row = entry.row ?? { ...(entry.match ?? {}), ...(entry.patch ?? {}) };
+return [{ json: row }];
+`);
+}
+
+export function errorInputCode() {
+  return codeNode(`
+const result = $('Evaluate Config Gateway').first()?.json ?? {};
+return [{ json: {
+  error: result.response ?? result,
+  context: {
+    request_id: $('Execute Workflow Trigger').first()?.json?.request_id,
+    operation_id: $('Execute Workflow Trigger').first()?.json?.operation_id,
+    workflow: 'WF01_V2_CONFIG_GATEWAY',
+  },
+} }];
+`);
+}

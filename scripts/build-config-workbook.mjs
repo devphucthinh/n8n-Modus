@@ -38,6 +38,7 @@ const schemas = {
   CONFIG_USER: [row('CONFIG_USER', { user_id: 'USER_ID_CONFIGURE', display_name: 'Người dùng mẫu - cần cấu hình', branch_id: 'CN_HN_TEST', trang_thai: 'ACTIVE' })],
   CONFIG_THONG_BAO: [
     ['STATUS_HEADER', 'Trạng thái Kiểm kê bia V2'],
+    ['STATUS_GATEWAY_HEALTH_LINE', 'Config Gateway: {gateway_health}'],
     ['STATUS_CONFIG_LINE', 'Cấu hình: {config_version}'],
     ['STATUS_BRANCH_COUNT_LINE', 'Chi nhánh hoạt động: {active_branch_count}'],
     ['STATUS_BRANCH_LINE', '- {branch_name} ({branch_id})'],

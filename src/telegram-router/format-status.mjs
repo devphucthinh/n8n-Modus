@@ -33,6 +33,7 @@ export function formatStatus({ gatewayResult, tables, locale = 'vi-VN' } = {}) {
   const response = gatewayResult.response;
   const lines = [
     render(messages.get('STATUS_HEADER'), response),
+    render(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),
     render(messages.get('STATUS_CONFIG_LINE'), response),
     render(messages.get('STATUS_BRANCH_COUNT_LINE'), response),
   ];

@@ -235,6 +235,7 @@ function statusResponse({ versionRow, configVersion, schemaVersion, snapshotId, 
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
   return {
     status: 'OK',
+    gateway_health: 'OK',
     state: maintenanceMode === 'YES' ? 'MAINTENANCE' : 'ACTIVE',
     config_version: configVersion,
     schema_version: schemaVersion,
