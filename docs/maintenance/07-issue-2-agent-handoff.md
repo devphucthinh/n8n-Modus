@@ -30,6 +30,10 @@
 - `docs/configuration/config-gateway-v2.md`
 - `docs/testing/issue-2-evidence.md`
 
+## Đọc kế hoạch tổng thể trước khi tiếp tục
+
+Các quyết định đã được grill không chỉ nằm trong lịch sử chat. Đọc theo thứ tự: `AGENTS.md` → `CONTEXT.md` → `docs/maintenance/README.md` → `docs/maintenance/04-v2-target-design.md` → `docs/specs/kiem-ke-bia-v2.md` → `docs/maintenance/06-next-steps.md` → các ADR liên quan trong `docs/adr/`. Các diagram V2 nằm trong `docs/maintenance/diagrams/`.
+
 ## Kiểm thử đã chạy
 
 ```powershell

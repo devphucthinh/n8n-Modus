@@ -100,6 +100,6 @@ Mỗi ticket cần có: phạm vi, file/workflow/sheet bị tác động, depend
 
 ## Hành động ngay kế tiếp
 
-Đặc tả đã được tạo tại [docs/specs/kiem-ke-bia-v2.md](../specs/kiem-ke-bia-v2.md). Hãy rà soát spec như baseline, sau đó dùng bước **to-tickets** của Ask Matt để tạo ticket theo dependency, rồi **implement** từng ticket. Cách này giữ được toàn bộ quyết định hiện tại và tránh phải sửa lại hàng loạt JSON do schema hoặc contract chưa khóa.
+Đặc tả đã được tạo tại [docs/specs/kiem-ke-bia-v2.md](../specs/kiem-ke-bia-v2.md). Các quyết định sau giai đoạn grill, Phương án A, dispatcher 10 phút, config trên Google Sheets, backup/retention và ranh giới V2/WF04 đã được ghi trong `CONTEXT.md`, các ADR, thiết kế đích và spec; agent mới không cần dựa vào lịch sử chat.
 
-Issue tracker chưa được cấu hình trong repo (không có remote hoặc triage vocabulary), nên spec hiện mới được lưu local và chưa được publish với nhãn `ready-for-agent`. Chạy `/setup-matt-pocock-skills` khi muốn bật bước publish/ticket tự động.
+Issue #2 đã được publish thành tracer bullet trên GitHub và có [handoff riêng](./07-issue-2-agent-handoff.md). PR hiện tại là [devphucthinh/n8n-Modus#20](https://github.com/devphucthinh/n8n-Modus/pull/20). Các epic E1–E10 còn lại vẫn phải được tách ticket theo dependency trước khi implement tiếp; không coi issue #2 là đã hoàn tất toàn bộ V2.
