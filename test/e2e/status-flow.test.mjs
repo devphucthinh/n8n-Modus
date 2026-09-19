@@ -49,3 +49,13 @@ test('gateway failures are formatted without internal payloads', () => {
   assert.match(result.reply.text, /Không thể hoàn tất thao tác|Mã lỗi/);
   assert.doesNotMatch(result.reply.text, /CONFIG_BRANCH\.timezone|normalized_config_json|fixture-chat/);
 });
+
+test('unsupported command uses configured message without a business write plan', () => {
+  const result = runStatusFlow({
+    update: telegramStatusUpdate({ text: '/batky' }),
+    tables: validConfig(),
+    now: FIXED_NOW,
+  });
+  assert.match(result.reply.text, /Lệnh này chưa được bật/);
+  assert.deepEqual(result.gateway.write_plan, []);
+});

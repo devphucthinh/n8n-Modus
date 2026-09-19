@@ -5,7 +5,6 @@ const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', '
 const SCHEMA_DATA_TYPES = new Set(['STRING', 'INTEGER', 'NUMBER', 'BOOLEAN', 'DATE', 'DATETIME']);
 const ACTIVE = 'ACTIVE';
 
-const clone = (value) => (value === undefined ? undefined : structuredClone(value));
 const asText = (value) => (value == null ? '' : String(value).trim());
 const isBlank = (value) => asText(value) === '';
 
@@ -42,8 +41,13 @@ function failure(errorCode, message, details = {}) {
 }
 
 function makeFailure(errorCode, message, envelope, details = {}) {
+  const requestId = asText(envelope?.request_id);
+  const operationId = asText(envelope?.operation_id);
   return failure(errorCode, message, {
-    error_id: safeErrorId(envelope?.operation_id, errorCode),
+    request_id: requestId,
+    operation_id: operationId,
+    retryable: false,
+    error_id: safeErrorId(operationId, errorCode),
     ...details,
   });
 }
@@ -219,10 +223,18 @@ function committedPredecessor(tables) {
     .at(-1) ?? null;
 }
 
-function statusResponse({ versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches }) {
+function configuredMessages(tables) {
+  return Object.fromEntries((tableRows(tables, 'CONFIG_THONG_BAO') ?? [])
+    .filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE' && !isBlank(row.message_key))
+    .map((row) => [asText(row.message_key), asText(row.message_text)]));
+}
+
+function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages }) {
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
   return {
     status: 'OK',
+    request_id: asText(envelope.request_id),
+    operation_id: asText(envelope.operation_id),
     gateway_health: 'OK',
     state: maintenanceMode === 'YES' ? 'MAINTENANCE' : 'ACTIVE',
     config_version: configVersion,
@@ -232,28 +244,41 @@ function statusResponse({ versionRow, configVersion, schemaVersion, snapshotId, 
     maintenance_mode: maintenanceMode,
     active_branch_count: activeBranches.length,
     active_branches: activeBranches,
+    messages,
+    data: {},
+    warnings: [],
   };
 }
 
 export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().toISOString() } = {}) {
-  const normalizedEnvelope = { operation_id: envelope.operation_id || 'unknown', ...envelope };
+  const messages = configuredMessages(tables);
+  if (!envelope || !envelope.request_id || !envelope.operation_id) {
+    const result = makeFailure('ENVELOPE_INVALID', 'request_id and operation_id are required', envelope ?? {});
+    result.response.messages = messages;
+    return result;
+  }
+  const normalizedEnvelope = { ...envelope };
+  const decorateFailure = (result) => {
+    if (!result?.ok) result.response = { ...(result.response ?? {}), messages };
+    return result;
+  };
   const tableError = validateCoreTables(tables, normalizedEnvelope);
-  if (tableError) return tableError;
+  if (tableError) return decorateFailure(tableError);
 
   const schemaResult = readSchemaRules(tables, normalizedEnvelope);
-  if (schemaResult.error) return schemaResult.error;
+  if (schemaResult.error) return decorateFailure(schemaResult.error);
   const rowError = validateRows(tables, schemaResult.rules, normalizedEnvelope);
-  if (rowError) return rowError;
+  if (rowError) return decorateFailure(rowError);
 
   if (asText(envelope.event_type).toUpperCase() === 'TELEGRAM_UPDATE' && !isBlank(envelope.actor_user_id)) {
     const actor = (tableRows(tables, 'CONFIG_USER') ?? []).find((row) => asText(row.user_id) === asText(envelope.actor_user_id));
     if (!actor || asText(actor.trang_thai).toUpperCase() !== ACTIVE) {
-      return makeFailure('USER_NOT_ACTIVE', 'User is not active', normalizedEnvelope);
+      return decorateFailure(makeFailure('USER_NOT_ACTIVE', 'User is not active', normalizedEnvelope));
     }
   }
 
   const versionRow = activeVersionRow(tables);
-  if (!versionRow || isBlank(versionRow.config_version)) return makeFailure('CONFIG_VERSION_MISSING', 'Active CONFIG_VERSION row is missing', normalizedEnvelope);
+  if (!versionRow || isBlank(versionRow.config_version)) return decorateFailure(makeFailure('CONFIG_VERSION_MISSING', 'Active CONFIG_VERSION row is missing', normalizedEnvelope));
   const configVersion = asText(versionRow.config_version);
   const schemaVersion = asText(versionRow.schema_version);
   const normalizedConfig = normalizeConfigTables(tables);
@@ -263,22 +288,30 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const operationType = asText(envelope.payload?.intent || envelope.operation_type || (asText(envelope.payload?.command).toLowerCase().startsWith('/trangthai') ? 'READ_STATUS' : 'START_OPERATION')).toUpperCase();
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
 
-  if (maintenanceMode === 'YES' && operationType !== 'READ_STATUS') {
-    return makeFailure('CONFIG_MAINTENANCE', 'Configuration is in maintenance mode', normalizedEnvelope, { maintenance_mode: maintenanceMode });
+  if (maintenanceMode === 'YES' && !['READ_STATUS', 'COMMAND_NOT_AVAILABLE'].includes(operationType)) {
+    return decorateFailure(makeFailure('CONFIG_MAINTENANCE', 'Configuration is in maintenance mode', normalizedEnvelope, { maintenance_mode: maintenanceMode }));
+  }
+  const activeBranches = (tableRows(tables, 'CONFIG_BRANCH') ?? [])
+    .filter((row) => asText(row.trang_thai).toUpperCase() === ACTIVE)
+    .map((row) => ({ branch_id: asText(row.branch_id), branch_name: asText(row.branch_name) }));
+  if (operationType === 'COMMAND_NOT_AVAILABLE') {
+    return {
+      ok: true,
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages }),
+      write_plan: [],
+      diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
+    };
   }
   if (predecessor) {
     const sameVersion = configVersion === asText(predecessor.config_version);
     const sameFingerprint = fingerprint === asText(predecessor.fingerprint);
-    if (sameVersion && !sameFingerprint) return makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'Configuration content changed without incrementing config_version', normalizedEnvelope);
-    if (!sameVersion && sameFingerprint) return makeFailure('CONFIG_VERSION_EMPTY_CHANGE', 'config_version changed without configuration content changing', normalizedEnvelope);
-    if (!sameVersion && !isVersionGreater(configVersion, predecessor.config_version)) return makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'config_version must increase', normalizedEnvelope);
+    if (sameVersion && !sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'Configuration content changed without incrementing config_version', normalizedEnvelope));
+    if (!sameVersion && sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_EMPTY_CHANGE', 'config_version changed without configuration content changing', normalizedEnvelope));
+    if (!sameVersion && !isVersionGreater(configVersion, predecessor.config_version)) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'config_version must increase', normalizedEnvelope));
     if (sameVersion && sameFingerprint) {
-      const activeBranches = (tableRows(tables, 'CONFIG_BRANCH') ?? [])
-        .filter((row) => asText(row.trang_thai).toUpperCase() === ACTIVE)
-        .map((row) => ({ branch_id: asText(row.branch_id), branch_name: asText(row.branch_name) }));
       return {
         ok: true,
-        response: statusResponse({ versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches }),
+        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages }),
         write_plan: [],
         diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: true },
       };
@@ -286,9 +319,6 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   }
 
   const snapshotId = `cfg-${configVersion.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint.slice(0, 16)}`;
-  const activeBranches = (tableRows(tables, 'CONFIG_BRANCH') ?? [])
-    .filter((row) => asText(row.trang_thai).toUpperCase() === ACTIVE)
-    .map((row) => ({ branch_id: asText(row.branch_id), branch_name: asText(row.branch_name) }));
   const operationId = asText(envelope.operation_id) || `op-${snapshotId}`;
   const requestId = asText(envelope.request_id);
   const operationRow = {
@@ -297,7 +327,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     operation_type: operationType,
     idempotency_key: requestId || operationId,
     expected_row_count: '1',
-    actual_row_count: '1',
+    actual_row_count: '',
     checksum: fingerprint,
     status: 'PREPARED',
     error_id: '',
@@ -316,12 +346,12 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   };
   return {
     ok: true,
-    response: statusResponse({ versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches }),
+    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages }),
     write_plan: [
       { sheet: 'OPERATION', action: 'APPEND', row: operationRow },
       { sheet: 'CONFIG_SNAPSHOT', action: 'APPEND', row: snapshotRow },
       { sheet: 'CONFIG_SNAPSHOT', action: 'UPDATE', match: { config_snapshot_id: snapshotId }, patch: { status: 'COMMITTED' } },
-      { sheet: 'OPERATION', action: 'UPDATE', match: { operation_id: operationId }, patch: { status: 'COMMITTED' } },
+      { sheet: 'OPERATION', action: 'UPDATE', match: { operation_id: operationId }, patch: { status: 'COMMITTED', actual_row_count: '1', updated_at: now } },
     ],
     diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: false },
   };

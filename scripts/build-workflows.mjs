@@ -26,16 +26,18 @@ function googleSheetNode(name, sheetName, operation = 'read', extra = {}) {
     options: { returnAll: true },
     ...extra,
   };
-  return node({ name, type: 'n8n-nodes-base.googleSheets', typeVersion: 4.5, parameters, credentials: { googleSheetsOAuth2Api: { name: GOOGLE_CREDENTIAL } } });
+  const result = node({ name, type: 'n8n-nodes-base.googleSheets', typeVersion: 4.5, parameters, credentials: { googleSheetsOAuth2Api: { name: GOOGLE_CREDENTIAL } } });
+  if (operation === 'read') result.alwaysOutputData = true;
+  return result;
 }
 
-function googleSheetUpdateNode(name, sheetName, matchingColumn) {
+function googleSheetUpdateNode(name, sheetName, matchingColumn, columns = [matchingColumn, 'status']) {
   return googleSheetNode(name, sheetName, 'update', {
     columns: {
       mappingMode: 'defineBelow',
-      value: Object.fromEntries([matchingColumn, 'status'].map((column) => [column, `={{$json.${column}}}`])),
+      value: Object.fromEntries(columns.map((column) => [column, `={{$json.${column}}}`])),
       matchingColumns: [matchingColumn],
-      schema: [matchingColumn, 'status'].map((idValue) => ({ id: idValue, displayName: idValue, required: false, defaultMatch: idValue === matchingColumn, display: true, type: 'string', canBeUsedToMatch: true })),
+      schema: columns.map((idValue) => ({ id: idValue, displayName: idValue, required: false, defaultMatch: idValue === matchingColumn, display: true, type: 'string', canBeUsedToMatch: true })),
       attemptToConvertTypes: false,
       convertFieldsToString: true,
     },
@@ -87,15 +89,16 @@ async function buildGatewayWorkflow() {
   const commitSnapshot = googleSheetUpdateNode('Commit CONFIG_SNAPSHOT', 'CONFIG_SNAPSHOT', 'config_snapshot_id');
   commitSnapshot.position = pos(2770, -100);
   const commitOperationRow = node({ name: 'Commit OPERATION row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(3) }, position: pos(3010, -100) });
-  const commitOperation = googleSheetUpdateNode('Commit OPERATION', 'OPERATION', 'operation_id');
+  const commitOperation = googleSheetUpdateNode('Commit OPERATION', 'OPERATION', 'operation_id', ['operation_id', 'status', 'actual_row_count', 'updated_at']);
   commitOperation.position = pos(3250, -100);
   const returnStatus = node({ name: 'Return Gateway Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const result = $('Evaluate Config Gateway').first()?.json ?? {}; return [{ json: result }];" }, position: pos(3490, -100) });
   const errorInput = node({ name: 'Prepare Error Handler Input', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: errorInputCode() }, position: pos(1570, 180) });
   const errorCall = node({ name: 'Call Error Handler', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF02_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(1810, 180), notes: 'V2 technical placeholder; select WF02_V2_ERROR_HANDLER after import.' });
   const nodes = [trigger, ...reads, assemble, decision, branch, writeRequired, prepareOperationRow, prepareOperation, prepareSnapshotRow, prepareSnapshot, commitSnapshotRow, commitSnapshot, commitOperationRow, commitOperation, returnStatus, errorInput, errorCall];
   const connections = {};
-  for (const read of reads) link(connections, trigger.name, read.name);
-  for (const read of reads) link(connections, read.name, assemble.name);
+  link(connections, trigger.name, reads[0].name);
+  for (let index = 0; index < reads.length - 1; index += 1) link(connections, reads[index].name, reads[index + 1].name);
+  link(connections, reads.at(-1).name, assemble.name);
   link(connections, assemble.name, decision.name);
   link(connections, decision.name, branch.name);
   link(connections, branch.name, writeRequired.name, 0);
@@ -139,22 +142,21 @@ async function buildErrorWorkflow() {
 
 async function buildRouterWorkflow() {
   const trigger = node({ name: 'Telegram Trigger', type: 'n8n-nodes-base.telegramTrigger', typeVersion: 1.2, parameters: { updates: ['message'] }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(0, 0) });
-  const readMessages = googleSheetNode('Read CONFIG_THONG_BAO', 'CONFIG_THONG_BAO');
-  readMessages.position = pos(260, 180);
   const normalize = node({ name: 'Normalize Status Update', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await normalizeCode() }, position: pos(260, -80) });
   const statusCheck = node({ name: 'Status command?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { string: [{ value1: '={{$json.command}}', operation: 'equals', value2: '/trangthai' }] } }, position: pos(520, -80) });
   const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF01_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, -160), notes: 'V2 technical placeholder; select WF01_V2_CONFIG_GATEWAY after import.' });
+  const callUnsupportedGateway = node({ name: 'Call Config Gateway - Command Check', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF01_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, 120), notes: 'Reads configured message templates through the Gateway without invoking a business worker.' });
   const formatStatusNode = node({ name: 'Format Status Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await formatCode() }, position: pos(1040, -120) });
   const formatUnsupported = node({ name: 'Format Command Not Available', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await unsupportedCode() }, position: pos(780, 120) });
   const send = node({ name: 'Send Telegram Reply', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'message', operation: 'sendMessage', chatId: '={{$json.reply_target.chat_id}}', text: '={{$json.text}}', additionalFields: { message_thread_id: '={{$json.reply_target.message_thread_id}}' } }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(1300, -40) });
-  const nodes = [trigger, readMessages, normalize, statusCheck, callGateway, formatStatusNode, formatUnsupported, send];
+  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, formatStatusNode, formatUnsupported, send];
   const connections = {};
-  link(connections, trigger.name, readMessages.name);
   link(connections, trigger.name, normalize.name);
   link(connections, normalize.name, statusCheck.name);
   link(connections, statusCheck.name, callGateway.name, 0);
-  link(connections, statusCheck.name, formatUnsupported.name, 1);
+  link(connections, statusCheck.name, callUnsupportedGateway.name, 1);
   link(connections, callGateway.name, formatStatusNode.name);
+  link(connections, callUnsupportedGateway.name, formatUnsupported.name);
   link(connections, formatStatusNode.name, send.name);
   link(connections, formatUnsupported.name, send.name);
   return baseWorkflow('WF03_V2_TELEGRAM_ROUTER', nodes, connections);

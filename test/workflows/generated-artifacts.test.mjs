@@ -37,8 +37,21 @@ test('exports stage and target immutable ledger rows', async () => {
   const operationCommit = gateway.nodes.find((node) => node.name === 'Commit OPERATION');
   assert.deepEqual(snapshotCommit.parameters.columns.matchingColumns, ['config_snapshot_id']);
   assert.deepEqual(operationCommit.parameters.columns.matchingColumns, ['operation_id']);
+  assert.deepEqual(operationCommit.parameters.columns.schema.map((column) => column.id), ['operation_id', 'status', 'actual_row_count', 'updated_at']);
   assert.ok(gateway.nodes.some((node) => node.name === 'Prepare CONFIG_SNAPSHOT row'));
 
   const errorWorkflow = workflows.find((workflow) => workflow.name === 'WF02_V2_ERROR_HANDLER');
   assert.ok(errorWorkflow.nodes.some((node) => node.name === 'Project ERROR_BIA row'));
+});
+
+test('keeps live configuration reads behind the Config Gateway', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  assert.equal(router.nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheets').length, 0);
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const reads = gateway.nodes.filter((node) => node.name.startsWith('Read '));
+  assert.equal(reads.length, 9);
+  assert.ok(reads.every((node) => node.alwaysOutputData === true));
+  assert.deepEqual(gateway.connections['Read ERROR_BIA'].main[0].map((target) => target.node), ['Assemble Config Tables']);
+  assert.deepEqual(gateway.connections['Execute Workflow Trigger'].main[0].map((target) => target.node), ['Read CONFIG_SCHEMA']);
 });

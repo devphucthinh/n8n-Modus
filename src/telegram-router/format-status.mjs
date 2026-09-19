@@ -2,8 +2,9 @@ const MAX_MESSAGE_LENGTH = 4096;
 
 const asText = (value) => (value == null ? '' : String(value));
 
-function messageMap(tables, locale = 'vi-VN') {
+function messageMap(tables, locale = 'vi-VN', fallbackMessages = {}) {
   const map = new Map();
+  for (const [key, value] of Object.entries(fallbackMessages ?? {})) map.set(asText(key), asText(value));
   for (const row of tables?.CONFIG_THONG_BAO ?? []) {
     if (asText(row.trang_thai).toUpperCase() === 'INACTIVE') continue;
     if (asText(row.locale) && asText(row.locale) !== locale) continue;
@@ -23,14 +24,15 @@ function errorTemplateKey(errorCode) {
 }
 
 export function formatStatus({ gatewayResult, tables, locale = 'vi-VN' } = {}) {
-  const messages = messageMap(tables, locale);
   if (!gatewayResult?.ok) {
     const response = gatewayResult?.response ?? {};
+    const messages = messageMap(tables, locale, response.messages);
     const template = messages.get(errorTemplateKey(response.error_code)) || messages.get('ERROR_GENERIC') || 'ERROR error_id={error_id}';
     return { text: render(template, { error_id: response.error_id || 'unknown' }).slice(0, MAX_MESSAGE_LENGTH) };
   }
 
   const response = gatewayResult.response;
+  const messages = messageMap(tables, locale, response.messages);
   const lines = [
     render(messages.get('STATUS_HEADER'), response),
     render(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),

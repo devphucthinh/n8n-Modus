@@ -36,6 +36,15 @@ for (const filename of files) {
         if (node.credentials?.telegramApi?.name !== 'TELEGRAM_KKB_V2') errors.push(`${filename}: Telegram credential mismatch`);
       }
       if (node.type === 'n8n-nodes-base.code' && /\b(?:import|export)\b/.test(node.parameters?.jsCode ?? '')) errors.push(`${filename}: Code node is not self-contained`);
+      if (node.type === 'n8n-nodes-base.code') {
+        try {
+          // Parse the embedded Code node exactly as n8n will compile it. This
+          // catches duplicate top-level declarations introduced by bundling.
+          new Function(node.parameters?.jsCode ?? '');
+        } catch (error) {
+          errors.push(`${filename}: Code node ${node.name} has invalid JavaScript: ${error.message}`);
+        }
+      }
     }
   } catch (error) {
     errors.push(`${filename}: ${error.message}`);
