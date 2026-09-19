@@ -1,0 +1,251 @@
+{
+  "name": "WF03_V2_TELEGRAM_ROUTER",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "id": "kkb-v2-telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "TELEGRAM_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "PASTE_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CONFIG_THONG_BAO",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-config-thong-bao",
+      "name": "Read CONFIG_THONG_BAO",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        260,
+        180
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const commandPattern = /^\\/(trangthai)(?:@[A-Za-z0-9_]+)?(?:\\s+.*)?$/i;\n\nconst text = (value) => (value == null ? '' : String(value));\n\nfunction normalizeStatusUpdate(update) {\n  const message = update?.message ?? update?.edited_message;\n  const updateId = update?.update_id;\n  if (updateId == null || !message?.chat?.id || !message?.from?.id) {\n    throw new Error('Telegram update requires update_id, message.chat.id and message.from.id');\n  }\n  const commandText = text(message.text).trim();\n  const isStatus = commandPattern.test(commandText);\n  const stableId = text(updateId);\n  return {\n    envelope: {\n      request_id: `tg-${stableId}`,\n      operation_id: `tg-${stableId}`,\n      event_type: 'TELEGRAM_UPDATE',\n      actor_user_id: text(message.from.id),\n      branch_id: null,\n      business_date: null,\n      config_version: null,\n      payload: {\n        command: commandText.split(/\\s+/, 1)[0] || '',\n        intent: isStatus ? 'READ_STATUS' : 'COMMAND_NOT_AVAILABLE',\n      },\n    },\n    reply_target: {\n      chat_id: text(message.chat.id),\n      message_thread_id: message.message_thread_id == null ? null : text(message.message_thread_id),\n    },\n    command: isStatus ? '/trangthai' : commandText.split(/\\s+/, 1)[0] || '',\n  };\n}\n\n\nconst update = $input.first()?.json ?? {};\nreturn [{ json: normalizeStatusUpdate(update) }];"
+      },
+      "id": "kkb-v2-normalize-status-update",
+      "name": "Normalize Status Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.command}}",
+              "operation": "equals",
+              "value2": "/trangthai"
+            }
+          ]
+        }
+      },
+      "id": "kkb-v2-status-command-",
+      "name": "Status command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "PASTE_WF01_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-call-config-gateway",
+      "name": "Call Config Gateway",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        -160
+      ],
+      "notes": "V2 technical placeholder; select WF01_V2_CONFIG_GATEWAY after import."
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_MESSAGE_LENGTH = 4096;\n\nconst asText = (value) => (value == null ? '' : String(value));\n\nfunction messageMap(tables, locale = 'vi-VN') {\n  const map = new Map();\n  for (const row of tables?.CONFIG_THONG_BAO ?? []) {\n    if (asText(row.trang_thai).toUpperCase() === 'INACTIVE') continue;\n    if (asText(row.locale) && asText(row.locale) !== locale) continue;\n    map.set(asText(row.message_key), asText(row.message_text));\n  }\n  return map;\n}\n\nfunction render(template, values) {\n  return asText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => asText(values[key]));\n}\n\nfunction errorTemplateKey(errorCode) {\n  if (errorCode === 'USER_NOT_ACTIVE') return 'USER_NOT_ACTIVE';\n  if (errorCode === 'COMMAND_NOT_AVAILABLE') return 'COMMAND_NOT_AVAILABLE';\n  return 'ERROR_GENERIC';\n}\n\nfunction formatStatus({ gatewayResult, tables, locale = 'vi-VN' } = {}) {\n  const messages = messageMap(tables, locale);\n  if (!gatewayResult?.ok) {\n    const response = gatewayResult?.response ?? {};\n    const template = messages.get(errorTemplateKey(response.error_code)) || messages.get('ERROR_GENERIC') || 'ERROR error_id={error_id}';\n    return { text: render(template, { error_id: response.error_id || 'unknown' }).slice(0, MAX_MESSAGE_LENGTH) };\n  }\n\n  const response = gatewayResult.response;\n  const lines = [\n    render(messages.get('STATUS_HEADER'), response),\n    render(messages.get('STATUS_CONFIG_LINE'), response),\n    render(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n  ];\n  for (const branch of response.active_branches ?? []) {\n    lines.push(render(messages.get('STATUS_BRANCH_LINE'), branch));\n  }\n  lines.push(render(messages.get('STATUS_MAINTENANCE_LINE'), response));\n  return { text: lines.filter(Boolean).join('\\n').slice(0, MAX_MESSAGE_LENGTH) };\n}\n\n\n\nconst input = $input.first()?.json ?? {};\nconst normalized = $('Normalize Status Update').first()?.json ?? {};\nconst messages = $('Read CONFIG_THONG_BAO').all().map((item) => item.json);\nconst gatewayResult = input.gateway ?? input;\nconst result = formatStatus({ gatewayResult, tables: { CONFIG_THONG_BAO: messages } });\nreturn [{ json: { reply_target: normalized.reply_target, text: result.text } }];"
+      },
+      "id": "kkb-v2-format-status-reply",
+      "name": "Format Status Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_MESSAGE_LENGTH = 4096;\n\nconst asText = (value) => (value == null ? '' : String(value));\n\nfunction messageMap(tables, locale = 'vi-VN') {\n  const map = new Map();\n  for (const row of tables?.CONFIG_THONG_BAO ?? []) {\n    if (asText(row.trang_thai).toUpperCase() === 'INACTIVE') continue;\n    if (asText(row.locale) && asText(row.locale) !== locale) continue;\n    map.set(asText(row.message_key), asText(row.message_text));\n  }\n  return map;\n}\n\nfunction render(template, values) {\n  return asText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => asText(values[key]));\n}\n\nfunction errorTemplateKey(errorCode) {\n  if (errorCode === 'USER_NOT_ACTIVE') return 'USER_NOT_ACTIVE';\n  if (errorCode === 'COMMAND_NOT_AVAILABLE') return 'COMMAND_NOT_AVAILABLE';\n  return 'ERROR_GENERIC';\n}\n\nfunction formatStatus({ gatewayResult, tables, locale = 'vi-VN' } = {}) {\n  const messages = messageMap(tables, locale);\n  if (!gatewayResult?.ok) {\n    const response = gatewayResult?.response ?? {};\n    const template = messages.get(errorTemplateKey(response.error_code)) || messages.get('ERROR_GENERIC') || 'ERROR error_id={error_id}';\n    return { text: render(template, { error_id: response.error_id || 'unknown' }).slice(0, MAX_MESSAGE_LENGTH) };\n  }\n\n  const response = gatewayResult.response;\n  const lines = [\n    render(messages.get('STATUS_HEADER'), response),\n    render(messages.get('STATUS_CONFIG_LINE'), response),\n    render(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n  ];\n  for (const branch of response.active_branches ?? []) {\n    lines.push(render(messages.get('STATUS_BRANCH_LINE'), branch));\n  }\n  lines.push(render(messages.get('STATUS_MAINTENANCE_LINE'), response));\n  return { text: lines.filter(Boolean).join('\\n').slice(0, MAX_MESSAGE_LENGTH) };\n}\n\n\n\nconst normalized = $('Normalize Status Update').first()?.json ?? {};\nconst messages = $('Read CONFIG_THONG_BAO').all().map((item) => item.json);\nconst result = formatStatus({ gatewayResult: { ok: false, response: { error_code: 'COMMAND_NOT_AVAILABLE', error_id: 'err-' + (normalized.envelope?.operation_id ?? 'unknown') } }, tables: { CONFIG_THONG_BAO: messages } });\nreturn [{ json: { reply_target: normalized.reply_target, text: result.text } }];"
+      },
+      "id": "kkb-v2-format-command-not-available",
+      "name": "Format Command Not Available",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$json.reply_target.chat_id}}",
+        "text": "={{$json.text}}",
+        "additionalFields": {
+          "message_thread_id": "={{$json.reply_target.message_thread_id}}"
+        }
+      },
+      "id": "kkb-v2-send-telegram-reply",
+      "name": "Send Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1300,
+        -40
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "TELEGRAM_KKB_V2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read CONFIG_THONG_BAO",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Normalize Status Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Status Update": {
+      "main": [
+        [
+          {
+            "node": "Status command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status command?": {
+      "main": [
+        [
+          {
+            "node": "Call Config Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Command Not Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Config Gateway": {
+      "main": [
+        [
+          {
+            "node": "Format Status Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Status Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Command Not Available": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "kkb-v2-wf03-v2-telegram-router-version",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "tags": []
+}
