@@ -24,3 +24,12 @@ test('rejects a duplicate configured unique key', () => {
   assert.equal(result.ok, false);
   assert.equal(result.response.error_code, 'CONFIG_DUPLICATE_KEY');
 });
+
+test('rejects an empty CONFIG_SCHEMA before planning writes', () => {
+  const tables = validConfig();
+  tables.CONFIG_SCHEMA = [];
+  const result = evaluateConfigGateway({ envelope, tables, now: FIXED_NOW });
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_SCHEMA_EMPTY');
+  assert.deepEqual(result.write_plan, []);
+});

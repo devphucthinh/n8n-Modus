@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gatewayCode, assembleCode, planRowCode, errorInputCode } from '../workflow-src/WF01_V2_CONFIG_GATEWAY.mjs';
-import { errorCode } from '../workflow-src/WF02_V2_ERROR_HANDLER.mjs';
+import { errorCode, errorRowCode, returnErrorCode } from '../workflow-src/WF02_V2_ERROR_HANDLER.mjs';
 import { normalizeCode, formatCode, unsupportedCode } from '../workflow-src/WF03_V2_TELEGRAM_ROUTER.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,6 +27,19 @@ function googleSheetNode(name, sheetName, operation = 'read', extra = {}) {
     ...extra,
   };
   return node({ name, type: 'n8n-nodes-base.googleSheets', typeVersion: 4.5, parameters, credentials: { googleSheetsOAuth2Api: { name: GOOGLE_CREDENTIAL } } });
+}
+
+function googleSheetUpdateNode(name, sheetName, matchingColumn) {
+  return googleSheetNode(name, sheetName, 'update', {
+    columns: {
+      mappingMode: 'defineBelow',
+      value: Object.fromEntries([matchingColumn, 'status'].map((column) => [column, `={{$json.${column}}}`])),
+      matchingColumns: [matchingColumn],
+      schema: [matchingColumn, 'status'].map((idValue) => ({ id: idValue, displayName: idValue, required: false, defaultMatch: idValue === matchingColumn, display: true, type: 'string', canBeUsedToMatch: true })),
+      attemptToConvertTypes: false,
+      convertFieldsToString: true,
+    },
+  });
 }
 
 function executeTrigger(name = 'Execute Workflow Trigger') {
@@ -71,10 +84,10 @@ async function buildGatewayWorkflow() {
   const prepareSnapshot = googleSheetNode('Prepare CONFIG_SNAPSHOT', 'CONFIG_SNAPSHOT', 'append', { columns: { mappingMode: 'autoMapInputData' } });
   prepareSnapshot.position = pos(2290, -100);
   const commitSnapshotRow = node({ name: 'Commit CONFIG_SNAPSHOT row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(2) }, position: pos(2530, -100) });
-  const commitSnapshot = googleSheetNode('Commit CONFIG_SNAPSHOT', 'CONFIG_SNAPSHOT', 'update', { columns: { mappingMode: 'autoMapInputData' } });
+  const commitSnapshot = googleSheetUpdateNode('Commit CONFIG_SNAPSHOT', 'CONFIG_SNAPSHOT', 'config_snapshot_id');
   commitSnapshot.position = pos(2770, -100);
   const commitOperationRow = node({ name: 'Commit OPERATION row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(3) }, position: pos(3010, -100) });
-  const commitOperation = googleSheetNode('Commit OPERATION', 'OPERATION', 'update', { columns: { mappingMode: 'autoMapInputData' } });
+  const commitOperation = googleSheetUpdateNode('Commit OPERATION', 'OPERATION', 'operation_id');
   commitOperation.position = pos(3250, -100);
   const returnStatus = node({ name: 'Return Gateway Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const result = $('Evaluate Config Gateway').first()?.json ?? {}; return [{ json: result }];" }, position: pos(3490, -100) });
   const errorInput = node({ name: 'Prepare Error Handler Input', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: errorInputCode() }, position: pos(1570, 180) });
@@ -105,16 +118,18 @@ async function buildErrorWorkflow() {
   const execute = executeTrigger();
   const trigger = node({ name: 'Error Trigger', type: 'n8n-nodes-base.errorTrigger', typeVersion: 1, position: pos(0, 220) });
   const normalize = node({ name: 'Normalize Workflow Error', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await errorCode() }, position: pos(300, 80) });
+  const errorRow = node({ name: 'Project ERROR_BIA row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await errorRowCode() }, position: pos(300, -40) });
   const append = googleSheetNode('Append ERROR_BIA', 'ERROR_BIA', 'append', { columns: { mappingMode: 'autoMapInputData' } });
   append.position = pos(580, -40);
   const replyCheck = node({ name: 'Reply target exists?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { string: [{ value1: '={{$json.reply_target.chat_id}}', operation: 'isNotEmpty' }] } }, position: pos(580, 200) });
   const send = node({ name: 'Send Safe Error Reply', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'message', operation: 'sendMessage', chatId: '={{$json.reply_target.chat_id}}', text: '={{$json.response.message_safe}}', additionalFields: { message_thread_id: '={{$json.reply_target.message_thread_id}}' } }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(860, 220) });
-  const result = node({ name: 'Return Error Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: 'return [{ json: $input.first()?.json ?? {} }];' }, position: pos(1110, 80) });
-  const nodes = [execute, trigger, normalize, append, replyCheck, send, result];
+  const result = node({ name: 'Return Error Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: returnErrorCode() }, position: pos(1110, 80) });
+  const nodes = [execute, trigger, normalize, errorRow, append, replyCheck, send, result];
   const connections = {};
   link(connections, execute.name, normalize.name);
   link(connections, trigger.name, normalize.name);
-  link(connections, normalize.name, append.name);
+  link(connections, normalize.name, errorRow.name);
+  link(connections, errorRow.name, append.name);
   link(connections, normalize.name, replyCheck.name);
   link(connections, replyCheck.name, send.name, 0);
   link(connections, append.name, result.name);

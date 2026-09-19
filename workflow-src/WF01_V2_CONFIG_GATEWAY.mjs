@@ -34,11 +34,12 @@ return [{ json: row }];
 export function errorInputCode() {
   return codeNode(`
 const result = $('Evaluate Config Gateway').first()?.json ?? {};
+const envelope = $('Execute Workflow Trigger').first()?.json?.envelope ?? $('Execute Workflow Trigger').first()?.json ?? {};
 return [{ json: {
   error: result.response ?? result,
   context: {
-    request_id: $('Execute Workflow Trigger').first()?.json?.request_id,
-    operation_id: $('Execute Workflow Trigger').first()?.json?.operation_id,
+    request_id: envelope.request_id,
+    operation_id: envelope.operation_id,
     workflow: 'WF01_V2_CONFIG_GATEWAY',
   },
 } }];

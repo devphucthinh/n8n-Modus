@@ -69,24 +69,6 @@ function validateCoreTables(tables, envelope) {
   return null;
 }
 
-function builtInSchemaRules() {
-  return CORE_SHEET_NAMES.flatMap((sheetName) => CORE_SHEET_DEFINITIONS[sheetName].map((columnName, ordinal) => ({
-    schema_rule_id: `builtin-${sheetName}-${columnName}`,
-    schema_version: '1.0',
-    sheet_name: sheetName,
-    column_name: columnName,
-    data_type: 'STRING',
-    required: 'NO',
-    unique_group: '',
-    reference_sheet: '',
-    reference_column: '',
-    allowed_values: '',
-    ordinal: String(ordinal + 1),
-    description_vi: '',
-    trang_thai: ACTIVE,
-  })));
-}
-
 function parseAllowedValues(value) {
   const text = asText(value);
   if (!text) return [];
@@ -103,7 +85,7 @@ function parseAllowedValues(value) {
 
 function readSchemaRules(tables, envelope) {
   const schemaRows = tableRows(tables, 'CONFIG_SCHEMA') ?? [];
-  if (schemaRows.length === 0) return { rules: builtInSchemaRules() };
+  if (schemaRows.length === 0) return { error: makeFailure('CONFIG_SCHEMA_EMPTY', 'CONFIG_SCHEMA must declare every core column before writes', envelope) };
   const rules = [];
   for (const [index, row] of schemaRows.entries()) {
     const sheetName = asText(row.sheet_name);
@@ -137,6 +119,10 @@ function readSchemaRules(tables, envelope) {
     });
   }
 
+  const duplicateRule = rules.find((rule, index) => rules.findIndex((candidate) => candidate.sheet_name === rule.sheet_name && candidate.column_name === rule.column_name) !== index);
+  if (duplicateRule) {
+    return { error: makeFailure('CONFIG_SCHEMA_DUPLICATE', `Duplicate schema rule for ${duplicateRule.sheet_name}.${duplicateRule.column_name}`, envelope, { sheet_name: duplicateRule.sheet_name, column_name: duplicateRule.column_name }) };
+  }
   const declared = new Set(rules.map((rule) => `${rule.sheet_name}.${rule.column_name}`));
   for (const sheetName of CORE_SHEET_NAMES) {
     for (const columnName of CORE_SHEET_DEFINITIONS[sheetName]) {
@@ -160,7 +146,6 @@ function typeValid(value, dataType) {
 }
 
 function validateRows(tables, rules, envelope) {
-  const uniqueValues = new Map();
   for (const rule of rules) {
     if (rule.trang_thai !== ACTIVE) continue;
     const rows = tableRows(tables, rule.sheet_name) ?? [];
@@ -193,7 +178,6 @@ function validateRows(tables, rules, envelope) {
         }
       }
     }
-    uniqueValues.set(`${rule.sheet_name}.${rule.column_name}`, seen);
   }
   return null;
 }
@@ -225,8 +209,12 @@ function isVersionGreater(current, previous) {
 }
 
 function committedPredecessor(tables) {
-  return (tableRows(tables, 'CONFIG_SNAPSHOT') ?? [])
+  const committedOperations = new Set((tableRows(tables, 'OPERATION') ?? [])
     .filter((row) => asText(row.status).toUpperCase() === 'COMMITTED')
+    .map((row) => asText(row.operation_id))
+    .filter(Boolean));
+  return (tableRows(tables, 'CONFIG_SNAPSHOT') ?? [])
+    .filter((row) => asText(row.status).toUpperCase() === 'COMMITTED' && committedOperations.has(asText(row.operation_id)))
     .sort((left, right) => asText(left.created_at).localeCompare(asText(right.created_at)))
     .at(-1) ?? null;
 }
@@ -272,7 +260,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const normalizedConfigJson = canonicalJson(normalizedConfig);
   const fingerprint = sha256(normalizedConfigJson);
   const predecessor = committedPredecessor(tables);
-  const operationType = asText(envelope.payload?.intent || envelope.operation_type || 'READ_STATUS').toUpperCase();
+  const operationType = asText(envelope.payload?.intent || envelope.operation_type || (asText(envelope.payload?.command).toLowerCase().startsWith('/trangthai') ? 'READ_STATUS' : 'START_OPERATION')).toUpperCase();
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
 
   if (maintenanceMode === 'YES' && operationType !== 'READ_STATUS') {

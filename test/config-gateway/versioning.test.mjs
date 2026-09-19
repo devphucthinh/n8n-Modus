@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateConfigGateway } from '../../src/config-gateway/evaluate-config.mjs';
+import { CORE_SHEET_DEFINITIONS } from '../../src/contracts/core-sheet-schema.mjs';
 import { envelope, FIXED_NOW, validConfig } from '../fixtures/config/valid-config.mjs';
+
+const completeRow = (sheetName, values) => Object.fromEntries(CORE_SHEET_DEFINITIONS[sheetName].map((column) => [column, values[column] ?? '']));
 
 function withCommittedSnapshot(configVersion, fingerprint, status = 'COMMITTED') {
   const tables = validConfig();
-  tables.CONFIG_SNAPSHOT = [{
+  tables.CONFIG_SNAPSHOT = [completeRow('CONFIG_SNAPSHOT', {
     config_snapshot_id: `cfg-${configVersion}-old`,
     config_version: configVersion,
     schema_version: '1.0',
@@ -14,7 +17,8 @@ function withCommittedSnapshot(configVersion, fingerprint, status = 'COMMITTED')
     operation_id: 'op-old',
     status,
     created_at: FIXED_NOW,
-  }];
+  })];
+  tables.OPERATION = [completeRow('OPERATION', { operation_id: 'op-old', status: 'COMMITTED' })];
   return tables;
 }
 
@@ -30,7 +34,7 @@ test('blocks an increased version when normalized content is unchanged', () => {
   const baseline = evaluateConfigGateway({ envelope, tables: validConfig(), now: FIXED_NOW });
   const tables = validConfig();
   tables.CONFIG_VERSION[0].config_version = 'v2';
-  tables.CONFIG_SNAPSHOT = [{
+  tables.CONFIG_SNAPSHOT = [completeRow('CONFIG_SNAPSHOT', {
     config_snapshot_id: 'cfg-v1-old',
     config_version: 'v1',
     schema_version: '1.0',
@@ -39,14 +43,15 @@ test('blocks an increased version when normalized content is unchanged', () => {
     operation_id: 'op-old',
     status: 'COMMITTED',
     created_at: FIXED_NOW,
-  }];
+  })];
+  tables.OPERATION = [completeRow('OPERATION', { operation_id: 'op-old', status: 'COMMITTED' })];
   const result = evaluateConfigGateway({ envelope, tables, now: FIXED_NOW });
   assert.equal(result.response.error_code, 'CONFIG_VERSION_EMPTY_CHANGE');
 });
 
 test('ignores PREPARED snapshots when finding the accepted predecessor', () => {
   const tables = validConfig();
-  tables.CONFIG_SNAPSHOT = [{
+  tables.CONFIG_SNAPSHOT = [completeRow('CONFIG_SNAPSHOT', {
     config_snapshot_id: 'cfg-v1-prepared',
     config_version: 'v1',
     schema_version: '1.0',
@@ -55,7 +60,9 @@ test('ignores PREPARED snapshots when finding the accepted predecessor', () => {
     operation_id: 'op-prepared',
     status: 'PREPARED',
     created_at: FIXED_NOW,
-  }];
+  })];
+  tables.OPERATION = [completeRow('OPERATION', { operation_id: 'op-prepared', status: 'PREPARED' })];
   const result = evaluateConfigGateway({ envelope, tables, now: FIXED_NOW });
   assert.equal(result.ok, true);
+  assert.equal(result.write_plan.length, 4);
 });

@@ -29,3 +29,16 @@ test('exports contain placeholders and credential names but no secrets', async (
   assert.match(text, /TELEGRAM_KKB_V2/);
   assert.doesNotMatch(text, /\b\d{8,}:[A-Za-z0-9_-]{20,}\b|AIza[0-9A-Za-z_-]{20,}|Bearer\s+[A-Za-z0-9._-]+/);
 });
+
+test('exports stage and target immutable ledger rows', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const snapshotCommit = gateway.nodes.find((node) => node.name === 'Commit CONFIG_SNAPSHOT');
+  const operationCommit = gateway.nodes.find((node) => node.name === 'Commit OPERATION');
+  assert.deepEqual(snapshotCommit.parameters.columns.matchingColumns, ['config_snapshot_id']);
+  assert.deepEqual(operationCommit.parameters.columns.matchingColumns, ['operation_id']);
+  assert.ok(gateway.nodes.some((node) => node.name === 'Prepare CONFIG_SNAPSHOT row'));
+
+  const errorWorkflow = workflows.find((workflow) => workflow.name === 'WF02_V2_ERROR_HANDLER');
+  assert.ok(errorWorkflow.nodes.some((node) => node.name === 'Project ERROR_BIA row'));
+});
