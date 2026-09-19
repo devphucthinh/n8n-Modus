@@ -1,0 +1,35 @@
+sequenceDiagram
+    autonumber
+    actor U as 👤 Người mua
+    participant T as ✈️ Telegram
+    participant W as WF04_01 hiện tại
+    participant S as 📊 WF04 Google Sheet
+    participant G as 🤖 Gemini
+
+    U->>T: Gửi một ảnh hóa đơn
+    T->>W: Telegram update
+    W->>S: Đọc CONFIG_ROLE và LOG_MUA
+    S-->>W: Quyền và dữ liệu hiện có
+    alt Không đủ quyền hoặc sai group
+        W-->>T: Từ chối thao tác
+    else Được phép
+        W->>T: Tải ảnh từ Telegram
+        T-->>W: Binary ảnh
+        W->>G: OCR lượt chính
+        G-->>W: JSON nhận diện
+        opt Kết quả chưa đạt
+            W->>G: OCR cứu hộ
+            G-->>W: JSON cứu hộ
+        end
+        alt OCR hợp lệ
+            W->>S: Ghi LOG_MUA ACTIVE
+            W-->>T: Hiển thị kết quả và nút thao tác
+            U->>T: Chọn xác nhận, sửa hoặc xóa
+            T->>W: Callback
+            W->>S: Cập nhật LOG_MUA và STATE_CHO
+            W-->>T: Trả kết quả
+        else OCR không hợp lệ
+            W->>S: Ghi ERROR và LOG_MUA lỗi
+            W-->>T: Yêu cầu xử lý lại
+        end
+    end

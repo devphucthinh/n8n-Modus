@@ -1,0 +1,35 @@
+flowchart TD
+    DUE(["⏰ Đến lịch mở phiên theo CONFIG_LICH"]) --> ACTIVE{"Chi nhánh đã có phiên mở?"}
+    ACTIVE -- "Có" --> SKIP["⚠️ Không mở phiên thứ hai và thông báo"]
+    ACTIVE -- "Không" --> OPEN["📝 Tạo phiên và CONFIG_SNAPSHOT"]
+    OPEN --> COUNT["👤 Nhập số đếm theo topic kiểm kê"]
+    COUNT --> REVIEW{"Đủ số đếm hợp lệ?"}
+    REVIEW -- "Không" --> WAITCOUNT["⏸️ Chờ nhập hoặc tiếp tục sau TTL"]
+    REVIEW -- "Có" --> FINAL["✅ Người kiểm kê xác nhận Chốt kiểm kê"]
+    FINAL --> INPUTS{"Có bản bán ACTIVE và không còn dòng nhập chờ?"}
+    INPUTS -- "Không" --> ZERO{"Đến mốc zero và thật sự không có dữ liệu chờ?"}
+    ZERO -- "Có" --> SYSTEMZERO["📢 Thông báo và tạo SYSTEM_ZERO hoặc nhập bằng 0"]
+    ZERO -- "Không" --> WAITDATA["⏸️ WAITING_DATA"]
+    SYSTEMZERO --> CALC
+    INPUTS -- "Có" --> CALC["⚙️ Tính tồn lý thuyết và chênh lệch"]
+    CALC --> RED{"Có mặt hàng đỏ chưa giải trình?"}
+    RED -- "Có" --> EXPLAIN["✍️ Yêu cầu giải trình từng mặt hàng"]
+    EXPLAIN --> CALC
+    RED -- "Không" --> COMMIT["💾 Commit Bản đối soát ngày có phiên bản"]
+    COMMIT --> REPORT["✈️ Gửi báo cáo ngày và cập nhật tồn thực tế"]
+    REPORT --> DONE(["🔒 Khóa sổ ngày"])
+    SKIP --> ENDWAIT(["Kết thúc tick"])
+    WAITCOUNT --> ENDWAIT
+    WAITDATA --> ENDWAIT
+
+    classDef startEnd fill:#E6E6FA,stroke:#333333,stroke-width:2px,color:#111111
+    classDef process fill:#D9EAD3,stroke:#274E13,stroke-width:2px,color:#111111
+    classDef decision fill:#FFE082,stroke:#8D6E00,stroke-width:2px,color:#111111
+    classDef waiting fill:#D9D2E9,stroke:#351C75,stroke-width:2px,color:#111111
+    classDef warning fill:#FCE5CD,stroke:#783F04,stroke-width:2px,color:#111111
+
+    class DUE,DONE,ENDWAIT startEnd
+    class OPEN,COUNT,FINAL,SYSTEMZERO,CALC,EXPLAIN,COMMIT,REPORT process
+    class ACTIVE,REVIEW,INPUTS,ZERO,RED decision
+    class WAITCOUNT,WAITDATA waiting
+    class SKIP warning

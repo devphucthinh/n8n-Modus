@@ -1,0 +1,76 @@
+flowchart LR
+    subgraph ENTRY["Ingress và điều phối"]
+        direction TB
+        USER["👤 Người dùng"] --> TG["✈️ Telegram"] --> ROUTER["WF03_V2<br/>TELEGRAM_ROUTER"]
+        CLOCK["⏱️ Nhịp kỹ thuật<br/>10 phút"] --> DISPATCH["WF04_V2<br/>DISPATCHER"]
+    end
+
+    subgraph SHARED["Dịch vụ dùng chung"]
+        direction TB
+        CONFIG["WF01_V2<br/>CONFIG_GATEWAY"]
+        FAIL["WF03–WF12<br/>Error envelope chuẩn"]
+        ERROR["WF02_V2<br/>ERROR_HANDLER"]
+    end
+
+    subgraph WORKERS["Workflow nghiệp vụ"]
+        direction TB
+        OPEN["WF05_V2<br/>MỞ PHIÊN KIỂM KÊ"]
+        COUNT["WF06_V2<br/>NHẬN SỐ ĐẾM"]
+        CLOSE["WF07_V2<br/>ĐỐI SOÁT · KHÓA SỔ"]
+        PURCHASE["WF08_V2<br/>HÓA ĐƠN NHẬP"]
+        SALES["WF09_V2<br/>BÁO CÁO BÁN"]
+        REPORT["WF10_V2<br/>BÁO CÁO"]
+        ARCHIVE["WF11_V2<br/>LƯU TRỮ TUẦN"]
+        BACKUP["WF12_V2<br/>BACKUP · PHỤC HỒI"]
+        LEDGER_IO["WF05–WF10<br/>Config · State · Ledger I/O"]
+        FILE_IO["WF08 · WF09 · WF11 · WF12<br/>Evidence · Archive · Backup I/O"]
+    end
+
+    subgraph DATA["Dữ liệu và dịch vụ ngoài"]
+        direction TB
+        SHEET[("📊 Google Sheet hoạt động<br/>Config · State · Ledger")]
+        DRIVE[("📁 Google Drive<br/>Evidence · Archive · Backup")]
+        GEMINI["🤖 Gemini OCR"]
+    end
+
+    ROUTER --> CONFIG
+    DISPATCH --> CONFIG
+    CONFIG <--> SHEET
+
+    ROUTER --> OPEN
+    ROUTER --> COUNT
+    ROUTER --> PURCHASE
+    ROUTER --> SALES
+    ROUTER --> REPORT
+
+    DISPATCH --> OPEN
+    DISPATCH --> CLOSE
+    DISPATCH --> REPORT
+    DISPATCH --> ARCHIVE
+    DISPATCH --> BACKUP
+
+    LEDGER_IO --> SHEET
+    FILE_IO --> DRIVE
+    PURCHASE --> GEMINI
+
+    FAIL -.-> ERROR
+    ERROR --> SHEET
+    ERROR --> TG
+
+    classDef actor fill:#FCE5CD,stroke:#783F04,stroke-width:2px,color:#111111
+    classDef trigger fill:#FFE082,stroke:#8D6E00,stroke-width:2px,color:#111111
+    classDef entry fill:#783F04,stroke:#4C2603,stroke-width:2px,color:#FFFFFF
+    classDef shared fill:#674EA7,stroke:#351C75,stroke-width:2px,color:#FFFFFF
+    classDef worker fill:#38761D,stroke:#274E13,stroke-width:2px,color:#FFFFFF
+    classDef data fill:#D9EAF7,stroke:#134F5C,stroke-width:2px,color:#111111
+    classDef ai fill:#A61C00,stroke:#660000,stroke-width:2px,color:#FFFFFF
+    classDef contract fill:#FFF2CC,stroke:#7F6000,stroke-width:2px,color:#111111
+
+    class USER actor
+    class CLOCK trigger
+    class ROUTER,DISPATCH entry
+    class CONFIG,ERROR shared
+    class OPEN,COUNT,CLOSE,PURCHASE,SALES,REPORT,ARCHIVE,BACKUP worker
+    class TG,SHEET,DRIVE data
+    class GEMINI ai
+    class LEDGER_IO,FILE_IO,FAIL contract

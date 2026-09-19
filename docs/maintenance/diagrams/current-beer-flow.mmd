@@ -1,0 +1,30 @@
+flowchart LR
+    SCHEDULE["⏰ Schedule hoặc Manual"] --> WF01["WF01<br/>Tạo phiên kiểm kê"]
+    WF01 --> CONFIG[("📊 CONFIG_BIA<br/>CONFIG_BRANCH<br/>TON_DAU_KY")]
+    WF01 --> STATE[("💾 STATE_CHO")]
+    WF01 --> TELEGRAM["✈️ Telegram topic<br/>và master message"]
+    USER["👤 Người kiểm kê"] --> TELEGRAM
+    TELEGRAM --> WF02["WF02<br/>Nhận lệnh và số đếm"]
+    WF02 --> USERS[("🔐 CONFIG_USER")]
+    WF02 --> STATE
+    WF02 --> COUNT[("💾 BIA_LOG")]
+    WF02 --> EVENTS[("📝 EVENT_LOG")]
+    WF02 --> WF03["WF03<br/>Đối soát và báo cáo"]
+    FALLBACK["⏰ Lịch dự phòng 08:30"] --> WF03
+    WF03 --> COUNT
+    WF03 --> OPENING[("💾 TON_DAU_KY")]
+    WF03 --> SOURCE["🌐 API hoặc MOCK<br/>bán và nhập"]
+    WF03 --> REPORT[("📊 BAO_CAO")]
+    WF03 --> TELEGRAM
+
+    classDef trigger fill:#FFE082,stroke:#8D6E00,stroke-width:2px,color:#1A1A1A
+    classDef workflow fill:#0B5394,stroke:#073763,stroke-width:2px,color:#FFFFFF
+    classDef data fill:#D9EAF7,stroke:#134F5C,stroke-width:2px,color:#111111
+    classDef external fill:#D9EAD3,stroke:#274E13,stroke-width:2px,color:#111111
+    classDef actor fill:#FCE5CD,stroke:#783F04,stroke-width:2px,color:#111111
+
+    class SCHEDULE,FALLBACK trigger
+    class WF01,WF02,WF03 workflow
+    class CONFIG,STATE,USERS,COUNT,EVENTS,OPENING,REPORT data
+    class TELEGRAM,SOURCE external
+    class USER actor

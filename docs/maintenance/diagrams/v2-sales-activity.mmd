@@ -1,0 +1,32 @@
+flowchart TD
+    START(["📥 Nhận file bán hàng trong topic"]) --> AUTH{"🔐 Có quyền NHAP_BAN_HANG?"}
+    AUTH -- "Không" --> DENY["❌ Từ chối và ghi audit"]
+    AUTH -- "Có" --> DRIVE["📁 Lưu file gốc vào Drive"]
+    DRIVE --> MATCH{"Nhận dạng đúng một CONFIG_NGUON_BAN?"}
+    MATCH -- "Không có" --> FIX["⏸️ CHO_SUA_FILE"]
+    MATCH -- "Nhiều" --> PICK["👤 Người dùng chọn nguồn phù hợp"]
+    PICK --> PARSE["⚙️ Parse theo cấu hình cột"]
+    MATCH -- "Có" --> PARSE
+    PARSE --> VALID{"Mã, đơn vị và ngày hợp lệ?"}
+    VALID -- "Không" --> FIX
+    VALID -- "Có" --> SPLIT["📊 Tách theo chi nhánh và ngày trong file"]
+    SPLIT --> NORMALIZE["🔄 Giữ dòng nguồn, ánh xạ, quy đổi và cộng gộp"]
+    NORMALIZE --> PREVIEW["👁️ Xem các Bản bán hàng nháp"]
+    PREVIEW --> PUBLISH{"Công bố tất cả hoặc từng ngày?"}
+    PUBLISH -- "Chưa" --> PREVIEW
+    PUBLISH -- "Có" --> VERSION["💾 Tạo phiên bản ACTIVE<br/>SUPERSEDE bản cũ nếu có"]
+    VERSION --> DONE(["✅ Sổ bán bia đã công bố"])
+    FIX --> BLOCK(["Khóa sổ ngày bị chặn đến khi sửa hoặc hủy"])
+    DENY --> ENDFAIL(["Kết thúc"])
+
+    classDef startEnd fill:#E6E6FA,stroke:#333333,stroke-width:2px,color:#111111
+    classDef process fill:#D9EAD3,stroke:#274E13,stroke-width:2px,color:#111111
+    classDef decision fill:#FFE082,stroke:#8D6E00,stroke-width:2px,color:#111111
+    classDef error fill:#F4CCCC,stroke:#990000,stroke-width:2px,color:#111111
+    classDef waiting fill:#D9D2E9,stroke:#351C75,stroke-width:2px,color:#111111
+
+    class START,DONE,BLOCK,ENDFAIL startEnd
+    class DRIVE,PICK,PARSE,SPLIT,NORMALIZE,PREVIEW,VERSION process
+    class AUTH,MATCH,VALID,PUBLISH decision
+    class DENY error
+    class FIX waiting

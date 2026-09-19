@@ -1,0 +1,34 @@
+sequenceDiagram
+    autonumber
+    participant K as ⏱️ Tick 10 phút
+    participant D as WF04 Dispatcher
+    participant C as WF01 Config Gateway
+    participant S as 📊 Google Sheets
+    participant W as ⚙️ Worker đến hạn
+    participant E as WF02 Error Handler
+
+    K->>D: Đánh thức
+    D->>C: Yêu cầu config snapshot
+    C->>S: Kiểm tra schema, version và hash
+    S-->>C: Config hợp lệ
+    C-->>D: CONFIG_SNAPSHOT
+    D->>S: Tìm lịch đến hạn hoặc cần chạy bù
+    S-->>D: Danh sách tác vụ
+    loop Mỗi tác vụ đến hạn
+        D->>S: Claim dispatch_key
+        alt Khóa đã hoàn tất hoặc đang chạy
+            S-->>D: SKIP
+        else Claim thành công
+            S-->>D: CLAIMED
+            D->>W: Execute với dispatch_key
+            alt Thành công
+                W->>S: Commit kết quả
+                W-->>D: SUCCESS
+                D->>S: Ghi dispatch SUCCESS
+            else Thất bại
+                W-->>D: FAILED và error envelope
+                D->>S: Ghi FAILED và failure_count
+                D->>E: Chuyển lỗi chuẩn hóa
+            end
+        end
+    end

@@ -1,0 +1,36 @@
+sequenceDiagram
+    autonumber
+    actor U as 👤 Người dùng
+    participant T as ✈️ Telegram
+    participant R as WF03 Router
+    participant C as WF01 Config Gateway
+    participant S as 📊 Google Sheets
+    participant W as ⚙️ Worker nghiệp vụ
+    participant D as 📁 Google Drive
+    participant E as WF02 Error Handler
+
+    U->>T: Gửi lệnh, callback, ảnh hoặc file
+    T->>R: Telegram update
+    R->>C: Yêu cầu config snapshot và quyền
+    C->>S: Đọc schema, version, user, role, topic
+    S-->>C: Cấu hình hiện hành
+    alt Cấu hình hoặc quyền không hợp lệ
+        C-->>R: Từ chối có mã lỗi
+        R->>E: Error envelope đã làm sạch
+        E->>S: Ghi ERROR_BIA và EVENT_LOG
+        E-->>T: Phản hồi không lộ cấu hình
+    else Hợp lệ
+        C-->>R: CONFIG_SNAPSHOT và quyền
+        R->>W: Standard input envelope
+        W->>S: Kiểm tra idempotency và revision
+        opt Có chứng từ gốc
+            W->>D: Lưu evidence trước xử lý
+            D-->>W: Drive file ID và hash
+        end
+        W->>S: Tạo operation PREPARED
+        W->>S: Ghi các dòng mang operation_id
+        W->>S: Đọc lại và xác minh
+        W->>S: Chuyển operation thành COMMITTED
+        W-->>R: Standard result envelope
+        R-->>T: Trả kết quả sau commit
+    end

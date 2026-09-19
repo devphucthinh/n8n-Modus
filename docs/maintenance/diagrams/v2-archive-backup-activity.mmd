@@ -1,0 +1,33 @@
+flowchart TD
+    TICK(["⏱️ Dispatcher gọi worker đến hạn"]) --> TYPE{"Loại tác vụ?"}
+
+    TYPE -- "Backup ngày" --> PREPARED{"Còn operation PREPARED?"}
+    PREPARED -- "Có" --> DEFER["⏸️ Hoãn sang tick kế tiếp trong cửa sổ chạy bù"]
+    PREPARED -- "Không" --> COPY["📁 Sao chép toàn bộ Google Sheet hoạt động"]
+    COPY --> CHECKCOPY{"Mở và kiểm tra bản sao thành công?"}
+    CHECKCOPY -- "Không" --> BACKUPFAIL["❌ Giữ bản cũ, retry và tăng failure_count"]
+    CHECKCOPY -- "Có" --> RETAIN["🧹 Chỉ xóa bản quá hạn sau khi bản mới hợp lệ"]
+    RETAIN --> BACKUPDONE(["✅ Backup ngày hoàn tất"])
+
+    TYPE -- "Lưu trữ tuần" --> READY{"Mọi ngày đã khóa, báo cáo tuần xong và không còn mở lại?"}
+    READY -- "Không" --> WAITARCH["⏸️ WAITING_ARCHIVE"]
+    READY -- "Có" --> CREATE["📁 Tạo file tuần và MANIFEST"]
+    CREATE --> VERIFY["🔍 Đọc lại, kiểm số dòng, khóa, cột, kỳ và hash"]
+    VERIFY --> MATCH{"Nguồn và file lưu trữ khớp?"}
+    MATCH -- "Không" --> ARCHFAIL["❌ Giữ nguyên nguồn và cảnh báo"]
+    MATCH -- "Có" --> INDEX["📝 Ghi ARCHIVE_INDEX là VERIFIED"]
+    INDEX --> PURGE["🧹 Xóa đúng ID trong manifest khỏi log hoạt động"]
+    PURGE --> REREAD["🔍 Đọc lại nguồn và ghi PURGED"]
+    REREAD --> ARCHDONE(["✅ Bản lưu trữ tuần bất biến"])
+
+    classDef startEnd fill:#E6E6FA,stroke:#333333,stroke-width:2px,color:#111111
+    classDef process fill:#D9EAD3,stroke:#274E13,stroke-width:2px,color:#111111
+    classDef decision fill:#FFE082,stroke:#8D6E00,stroke-width:2px,color:#111111
+    classDef error fill:#F4CCCC,stroke:#990000,stroke-width:2px,color:#111111
+    classDef waiting fill:#D9D2E9,stroke:#351C75,stroke-width:2px,color:#111111
+
+    class TICK,BACKUPDONE,ARCHDONE startEnd
+    class COPY,RETAIN,CREATE,VERIFY,INDEX,PURGE,REREAD process
+    class TYPE,PREPARED,CHECKCOPY,READY,MATCH decision
+    class BACKUPFAIL,ARCHFAIL error
+    class DEFER,WAITARCH waiting

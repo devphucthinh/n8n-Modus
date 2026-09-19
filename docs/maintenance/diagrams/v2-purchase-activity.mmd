@@ -1,0 +1,37 @@
+flowchart TD
+    START(["📥 Ảnh đầu tiên vào topic nhập hàng"]) --> AUTH{"🔐 User và topic hợp lệ?"}
+    AUTH -- "Không" --> DENY["❌ Từ chối và ghi audit"]
+    AUTH -- "Có" --> DRAFT["📝 Mở hoặc tiếp tục Hóa đơn nháp"]
+    DRAFT --> LIMIT{"Đã đạt giới hạn ảnh cấu hình?"}
+    LIMIT -- "Có" --> WAIT["⏸️ Yêu cầu đọc hóa đơn hoặc hủy"]
+    LIMIT -- "Không" --> DRIVE["📁 Lưu ảnh gốc vào Drive"]
+    DRIVE --> STORED{"Lưu thành công?"}
+    STORED -- "Không" --> RETRY["🔄 Giữ Telegram file ID và chờ retry"]
+    STORED -- "Có" --> COLLECT["📷 Gắn ảnh theo đúng thứ tự"]
+    COLLECT --> READ{"Người dùng bấm Đọc hóa đơn?"}
+    READ -- "Chưa" --> WAIT
+    READ -- "Có" --> OCR["🤖 Gemini OCR chính và cứu hộ"]
+    OCR --> RESULT{"Kết quả dùng được?"}
+    RESULT -- "Không" --> MANUAL["✍️ MANUAL_NO_OCR hoặc hủy có lý do"]
+    RESULT -- "Có" --> REVIEW["👁️ Sửa, ánh xạ và quy đổi từng dòng"]
+    MANUAL --> REVIEW
+    REVIEW --> TERMINAL{"Mọi dòng đã ở trạng thái kết thúc?"}
+    TERMINAL -- "Không" --> REVIEW
+    TERMINAL -- "Có" --> ACK{"Cảnh báo giá đã được xem?"}
+    ACK -- "Không" --> REVIEW
+    ACK -- "Có" --> COMMIT["💾 PREPARED → COMMITTED<br/>ghi Sổ nhập bia"]
+    COMMIT --> DONE(["✅ Hóa đơn hoàn tất"])
+    DENY --> ENDFAIL(["Kết thúc"])
+    RETRY --> ENDFAIL
+
+    classDef startEnd fill:#E6E6FA,stroke:#333333,stroke-width:2px,color:#111111
+    classDef process fill:#D9EAD3,stroke:#274E13,stroke-width:2px,color:#111111
+    classDef decision fill:#FFE082,stroke:#8D6E00,stroke-width:2px,color:#111111
+    classDef error fill:#F4CCCC,stroke:#990000,stroke-width:2px,color:#111111
+    classDef waiting fill:#D9D2E9,stroke:#351C75,stroke-width:2px,color:#111111
+
+    class START,DONE,ENDFAIL startEnd
+    class DRAFT,DRIVE,COLLECT,OCR,MANUAL,REVIEW,COMMIT process
+    class AUTH,LIMIT,STORED,READ,RESULT,TERMINAL,ACK decision
+    class DENY,RETRY error
+    class WAIT waiting
