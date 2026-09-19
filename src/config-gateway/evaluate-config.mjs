@@ -256,6 +256,13 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const rowError = validateRows(tables, schemaResult.rules, normalizedEnvelope);
   if (rowError) return rowError;
 
+  if (asText(envelope.event_type).toUpperCase() === 'TELEGRAM_UPDATE' && !isBlank(envelope.actor_user_id)) {
+    const actor = (tableRows(tables, 'CONFIG_USER') ?? []).find((row) => asText(row.user_id) === asText(envelope.actor_user_id));
+    if (!actor || asText(actor.trang_thai).toUpperCase() !== ACTIVE) {
+      return makeFailure('USER_NOT_ACTIVE', 'User is not active', normalizedEnvelope);
+    }
+  }
+
   const versionRow = activeVersionRow(tables);
   if (!versionRow || isBlank(versionRow.config_version)) return makeFailure('CONFIG_VERSION_MISSING', 'Active CONFIG_VERSION row is missing', normalizedEnvelope);
   const configVersion = asText(versionRow.config_version);
