@@ -245,3 +245,13 @@ Phải nằm trong Google Sheets:
 - Folder ID dùng cho evidence/archive/backup và retention.
 
 Secret không phải cấu hình nghiệp vụ và không được đặt trong Google Sheets.
+
+## Tracer bullet issue #2 — Config Gateway và `/trangthai`
+
+Slice đầu tiên đã được đóng gói thành ba workflow bất hoạt để import độc lập:
+
+1. `WF01_V2_CONFIG_GATEWAY`: đọc chín tab core, validate schema/reference/unique, fingerprint SHA-256 và staged snapshot.
+2. `WF02_V2_ERROR_HANDLER`: chuẩn hóa lỗi, redaction đệ quy, retryability và `ERROR_BIA` row.
+3. `WF03_V2_TELEGRAM_ROUTER`: Telegram Trigger duy nhất, route `/trangthai`, template hóa phản hồi và nhánh command chưa bật.
+
+Các workflow được sinh lại bằng `npm run build:workflows`; kiểm tra cấu trúc, placeholder credential/Sheet ID và secret scan bằng `npm run validate:workflows`. Workflow JSON không chứa token hoặc credential ID thật. Workbook `outputs/issue-2/KKB_V2_CONFIG_BASELINE.xlsx` chỉ là fixture để copy tab vào live Google Sheet.

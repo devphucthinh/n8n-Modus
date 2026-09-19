@@ -1,0 +1,51 @@
+{
+  "workbook": "C:\\Users\\TD-996\\Documents\\ChatGPT\\n8n\\outputs\\issue-2\\KKB_V2_CONFIG_BASELINE.xlsx",
+  "sheets": [
+    {
+      "name": "CONFIG_SCHEMA",
+      "rows": 73,
+      "columns": 13
+    },
+    {
+      "name": "CONFIG_VERSION",
+      "rows": 2,
+      "columns": 7
+    },
+    {
+      "name": "CONFIG_GLOBAL",
+      "rows": 3,
+      "columns": 5
+    },
+    {
+      "name": "CONFIG_BRANCH",
+      "rows": 2,
+      "columns": 6
+    },
+    {
+      "name": "CONFIG_USER",
+      "rows": 2,
+      "columns": 4
+    },
+    {
+      "name": "CONFIG_THONG_BAO",
+      "rows": 9,
+      "columns": 4
+    },
+    {
+      "name": "CONFIG_SNAPSHOT",
+      "rows": 1,
+      "columns": 8
+    },
+    {
+      "name": "OPERATION",
+      "rows": 1,
+      "columns": 11
+    },
+    {
+      "name": "ERROR_BIA",
+      "rows": 1,
+      "columns": 14
+    }
+  ],
+  "errors": []
+}
