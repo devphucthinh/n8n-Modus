@@ -50,8 +50,18 @@ test('keeps live configuration reads behind the Config Gateway', async () => {
   assert.equal(router.nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheets').length, 0);
   const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
   const reads = gateway.nodes.filter((node) => node.name.startsWith('Read '));
-  assert.equal(reads.length, 9);
+  assert.equal(reads.length, 15);
   assert.ok(reads.every((node) => node.alwaysOutputData === true));
-  assert.deepEqual(gateway.connections['Read ERROR_BIA'].main[0].map((target) => target.node), ['Assemble Config Tables']);
+  assert.deepEqual(gateway.connections['Read CONFIG_LENH'].main[0].map((target) => target.node), ['Assemble Config Tables']);
   assert.deepEqual(gateway.connections['Execute Workflow Trigger'].main[0].map((target) => target.node), ['Read CONFIG_SCHEMA']);
+});
+
+test('WF03 carries router table requests and keeps command policy Sheet-driven', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  assert.equal(router.nodes.filter((node) => node.type === 'n8n-nodes-base.telegramTrigger').length, 1);
+  const decision = router.nodes.find((node) => node.name === 'Router Decision');
+  assert.ok(decision);
+  assert.match(decision.parameters.jsCode, /CONFIG_LENH/);
+  assert.doesNotMatch(JSON.stringify(router), /WF05_V2_MO_PHIEN_KIEM_KE|KIEM_KE_WRITE/);
 });

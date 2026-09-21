@@ -3,11 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gatewayCode, assembleCode, planRowCode, errorInputCode } from '../workflow-src/WF01_V2_CONFIG_GATEWAY.mjs';
 import { errorCode, errorRowCode, returnErrorCode } from '../workflow-src/WF02_V2_ERROR_HANDLER.mjs';
-import { normalizeCode, formatCode, unsupportedCode } from '../workflow-src/WF03_V2_TELEGRAM_ROUTER.mjs';
+import { normalizeCode, decisionCode } from '../workflow-src/WF03_V2_TELEGRAM_ROUTER.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(root, 'workflows');
-const SHEETS = ['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA'];
+const SHEETS = ['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH'];
 const GOOGLE_CREDENTIAL = 'GOOGLE_SHEETS_KKB_V2';
 const TELEGRAM_CREDENTIAL = 'TELEGRAM_KKB_V2';
 
@@ -141,24 +141,22 @@ async function buildErrorWorkflow() {
 }
 
 async function buildRouterWorkflow() {
-  const trigger = node({ name: 'Telegram Trigger', type: 'n8n-nodes-base.telegramTrigger', typeVersion: 1.2, parameters: { updates: ['message'] }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(0, 0) });
-  const normalize = node({ name: 'Normalize Status Update', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await normalizeCode() }, position: pos(260, -80) });
+  const trigger = node({ name: 'Telegram Trigger', type: 'n8n-nodes-base.telegramTrigger', typeVersion: 1.2, parameters: { updates: ['message', 'edited_message', 'callback_query'] }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(0, 0) });
+  const normalize = node({ name: 'Normalize Telegram Update', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await normalizeCode() }, position: pos(260, -80) });
   const statusCheck = node({ name: 'Status command?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { string: [{ value1: '={{$json.command}}', operation: 'equals', value2: '/trangthai' }] } }, position: pos(520, -80) });
   const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF01_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, -160), notes: 'V2 technical placeholder; select WF01_V2_CONFIG_GATEWAY after import.' });
   const callUnsupportedGateway = node({ name: 'Call Config Gateway - Command Check', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF01_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, 120), notes: 'Reads configured message templates through the Gateway without invoking a business worker.' });
-  const formatStatusNode = node({ name: 'Format Status Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await formatCode() }, position: pos(1040, -120) });
-  const formatUnsupported = node({ name: 'Format Command Not Available', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await unsupportedCode() }, position: pos(780, 120) });
+  const decision = node({ name: 'Router Decision', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await decisionCode() }, position: pos(1040, -40), notes: 'Reads CONFIG_ROLE/CONFIG_PERMISSION/CONFIG_USER_ROLE/CONFIG_ROLE_PERMISSION/CONFIG_TOPIC/CONFIG_LENH from Config Gateway response.' });
   const send = node({ name: 'Send Telegram Reply', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'message', operation: 'sendMessage', chatId: '={{$json.reply_target.chat_id}}', text: '={{$json.text}}', additionalFields: { message_thread_id: '={{$json.reply_target.message_thread_id}}' } }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(1300, -40) });
-  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, formatStatusNode, formatUnsupported, send];
+  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, decision, send];
   const connections = {};
   link(connections, trigger.name, normalize.name);
   link(connections, normalize.name, statusCheck.name);
   link(connections, statusCheck.name, callGateway.name, 0);
   link(connections, statusCheck.name, callUnsupportedGateway.name, 1);
-  link(connections, callGateway.name, formatStatusNode.name);
-  link(connections, callUnsupportedGateway.name, formatUnsupported.name);
-  link(connections, formatStatusNode.name, send.name);
-  link(connections, formatUnsupported.name, send.name);
+  link(connections, callGateway.name, decision.name);
+  link(connections, callUnsupportedGateway.name, decision.name);
+  link(connections, decision.name, send.name);
   return baseWorkflow('WF03_V2_TELEGRAM_ROUTER', nodes, connections);
 }
 

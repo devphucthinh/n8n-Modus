@@ -260,7 +260,12 @@ function requestedConfigTables(tables, requested) {
     .map((row) => ({ ...row }))]));
 }
 
-function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables = {} }) {
+function contextConfigTables(tables, requested) {
+  if (requested.length === 0) return {};
+  return Object.fromEntries(['CONFIG_USER', 'CONFIG_BRANCH', 'CONFIG_THONG_BAO', 'ERROR_BIA'].map((sheetName) => [sheetName, (tableRows(tables, sheetName) ?? []).map((row) => ({ ...row }))]));
+}
+
+function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables = {}, contextTables = {} }) {
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
   return {
     status: 'OK',
@@ -276,7 +281,7 @@ function statusResponse({ envelope, versionRow, configVersion, schemaVersion, sn
     active_branch_count: activeBranches.length,
     active_branches: activeBranches,
     messages,
-    data: { config_tables: configTables },
+    data: { config_tables: configTables, context_tables: contextTables },
     warnings: [],
   };
 }
@@ -332,7 +337,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   if (operationType === 'COMMAND_NOT_AVAILABLE') {
     return {
       ok: true,
-      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested) }),
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
       write_plan: [],
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
     };
@@ -346,7 +351,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     if (sameVersion && sameFingerprint) {
       return {
         ok: true,
-        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested) }),
+        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
         write_plan: [],
         diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: true },
       };
@@ -381,7 +386,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   };
   return {
     ok: true,
-    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested) }),
+    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
     write_plan: [
       { sheet: 'OPERATION', action: 'APPEND', row: operationRow },
       { sheet: 'CONFIG_SNAPSHOT', action: 'APPEND', row: snapshotRow },

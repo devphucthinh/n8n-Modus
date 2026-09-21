@@ -4,7 +4,9 @@
     {
       "parameters": {
         "updates": [
-          "message"
+          "message",
+          "edited_message",
+          "callback_query"
         ]
       },
       "id": "kkb-v2-telegram-trigger",
@@ -23,10 +25,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const commandPattern = /^\\/(trangthai)(?:@[A-Za-z0-9_]+)?(?:\\s+.*)?$/i;\n\nconst text = (value) => (value == null ? '' : String(value));\n\nfunction normalizeStatusUpdate(update) {\n  const message = update?.message ?? update?.edited_message;\n  const updateId = update?.update_id;\n  if (updateId == null || !message?.chat?.id || !message?.from?.id) {\n    throw new Error('Telegram update requires update_id, message.chat.id and message.from.id');\n  }\n  const commandText = text(message.text).trim();\n  const isStatus = commandPattern.test(commandText);\n  const stableId = text(updateId);\n  return {\n    envelope: {\n      request_id: `tg-${stableId}`,\n      operation_id: `tg-${stableId}`,\n      event_type: 'TELEGRAM_UPDATE',\n      actor_user_id: text(message.from.id),\n      branch_id: null,\n      business_date: null,\n      config_version: null,\n      payload: {\n        command: commandText.split(/\\s+/, 1)[0] || '',\n        intent: isStatus ? 'READ_STATUS' : 'COMMAND_NOT_AVAILABLE',\n      },\n    },\n    reply_target: {\n      chat_id: text(message.chat.id),\n      message_thread_id: message.message_thread_id == null ? null : text(message.message_thread_id),\n    },\n    command: isStatus ? '/trangthai' : commandText.split(/\\s+/, 1)[0] || '',\n  };\n}\n\n\nconst update = $input.first()?.json ?? {};\nreturn [{ json: normalizeStatusUpdate(update) }];"
+        "jsCode": "const commandPattern = /^\\/([A-Za-z0-9_]+)(?:@[A-Za-z0-9_]+)?(?:\\s+([\\s\\S]*))?$/i;\nconst text = (value) => (value == null ? '' : String(value));\n\nfunction sourceParts(update) {\n  const callback = update?.callback_query;\n  const message = update?.message ?? update?.edited_message ?? callback?.message;\n  const actor = message?.from ?? callback?.from;\n  return { callback, message, actor };\n}\n\nfunction parseCommand(rawText) {\n  const raw = text(rawText).trim();\n  const match = commandPattern.exec(raw);\n  if (!match) return { command: '', args: [], intent: 'COMMAND_NOT_AVAILABLE', raw_text: raw };\n  const command = `/${match[1].toLowerCase()}`;\n  const args = text(match[2]).trim() ? text(match[2]).trim().split(/\\s+/).slice(0, 20) : [];\n  const intent = command === '/trangthai' ? 'READ_STATUS' : command === '/help' ? 'READ_HELP' : command === '/retry' ? 'MANUAL_RETRY' : 'ROUTE_COMMAND';\n  return { command, args, intent, raw_text: raw };\n}\n\nfunction normalizeTelegramUpdate(update) {\n  const updateId = update?.update_id;\n  const { callback, message, actor } = sourceParts(update);\n  if (updateId == null || !message?.chat?.id || !actor?.id) {\n    throw new Error('Telegram update requires update_id, message.chat.id and message.from.id');\n  }\n  const parsed = parseCommand(callback?.data ?? message.text);\n  const stableId = text(updateId);\n  const replyTarget = {\n    chat_id: text(message.chat.id),\n    message_thread_id: message.message_thread_id == null ? null : text(message.message_thread_id),\n  };\n  return {\n    envelope: {\n      request_id: `tg-${stableId}`,\n      operation_id: `tg-${stableId}`,\n      event_type: 'TELEGRAM_UPDATE',\n      actor_user_id: text(actor.id),\n      branch_id: null,\n      business_date: null,\n      config_version: null,\n      payload: {\n        command: parsed.command,\n        intent: parsed.intent,\n        args: parsed.args,\n        raw_text: parsed.raw_text,\n        callback_id: callback?.id ? text(callback.id) : null,\n        callback_data: callback?.data ? text(callback.data) : null,\n      },\n    },\n    reply_target: replyTarget,\n    command: parsed.command,\n    args: parsed.args,\n    callback: callback ? { id: text(callback.id), data: text(callback.data) } : null,\n  };\n}\n\nfunction normalizeStatusUpdate(update) {\n  const normalized = normalizeTelegramUpdate(update);\n  const isStatus = normalized.command === '/trangthai';\n  return {\n    ...normalized,\n    envelope: {\n      ...normalized.envelope,\n      payload: {\n        ...normalized.envelope.payload,\n        intent: isStatus ? 'READ_STATUS' : 'COMMAND_NOT_AVAILABLE',\n      },\n    },\n    command: isStatus ? '/trangthai' : normalized.command,\n  };\n}\n\n\nconst update = $input.first()?.json ?? {};\nconst normalized = normalizeTelegramUpdate(update);\nnormalized.envelope.payload.required_sheet_names = normalized.command === '/trangthai'\n  ? []\n  : ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH'];\nreturn [{ json: normalized }];"
       },
-      "id": "kkb-v2-normalize-status-update",
-      "name": "Normalize Status Update",
+      "id": "kkb-v2-normalize-telegram-update",
+      "name": "Normalize Telegram Update",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -99,29 +101,17 @@
     },
     {
       "parameters": {
-        "jsCode": "const MAX_MESSAGE_LENGTH = 4096;\n\nconst asText = (value) => (value == null ? '' : String(value));\n\nfunction messageMap(tables, locale = 'vi-VN', fallbackMessages = {}) {\n  const map = new Map();\n  for (const [key, value] of Object.entries(fallbackMessages ?? {})) map.set(asText(key), asText(value));\n  for (const row of tables?.CONFIG_THONG_BAO ?? []) {\n    if (asText(row.trang_thai).toUpperCase() === 'INACTIVE') continue;\n    if (asText(row.locale) && asText(row.locale) !== locale) continue;\n    map.set(asText(row.message_key), asText(row.message_text));\n  }\n  return map;\n}\n\nfunction render(template, values) {\n  return asText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => asText(values[key]));\n}\n\nfunction errorTemplateKey(errorCode) {\n  if (errorCode === 'USER_NOT_ACTIVE') return 'USER_NOT_ACTIVE';\n  if (errorCode === 'COMMAND_NOT_AVAILABLE') return 'COMMAND_NOT_AVAILABLE';\n  return 'ERROR_GENERIC';\n}\n\nfunction formatStatus({ gatewayResult, tables, locale = 'vi-VN' } = {}) {\n  if (!gatewayResult?.ok) {\n    const response = gatewayResult?.response ?? {};\n    const messages = messageMap(tables, locale, response.messages);\n    const template = messages.get(errorTemplateKey(response.error_code)) || messages.get('ERROR_GENERIC') || 'ERROR error_id={error_id}';\n    return { text: render(template, { error_id: response.error_id || 'unknown' }).slice(0, MAX_MESSAGE_LENGTH) };\n  }\n\n  const response = gatewayResult.response;\n  const messages = messageMap(tables, locale, response.messages);\n  const lines = [\n    render(messages.get('STATUS_HEADER'), response),\n    render(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),\n    render(messages.get('STATUS_CONFIG_LINE'), response),\n    render(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n  ];\n  for (const branch of response.active_branches ?? []) {\n    lines.push(render(messages.get('STATUS_BRANCH_LINE'), branch));\n  }\n  lines.push(render(messages.get('STATUS_MAINTENANCE_LINE'), response));\n  return { text: lines.filter(Boolean).join('\\n').slice(0, MAX_MESSAGE_LENGTH) };\n}\n\n\n\nconst input = $input.first()?.json ?? {};\nconst normalized = $('Normalize Status Update').first()?.json ?? {};\nconst gatewayResult = input.gateway ?? input;\nconst result = formatStatus({ gatewayResult, tables: {} });\nreturn [{ json: { reply_target: normalized.reply_target, text: result.text } }];"
+        "jsCode": "const routerText = (value) => (value == null ? '' : String(value).trim());\nconst routerActive = (row) => routerText(row?.trang_thai).toUpperCase() === 'ACTIVE';\n\nfunction routerMessages(gatewayResult, context) {\n  const map = new Map(Object.entries(gatewayResult?.response?.messages ?? {}));\n  for (const row of context?.CONFIG_THONG_BAO ?? []) {\n    if (routerActive(row)) map.set(routerText(row.message_key), routerText(row.message_text));\n  }\n  return map;\n}\n\nfunction routerRender(template, values) {\n  return routerText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => routerText(values[key]));\n}\n\nfunction routerErrorText(gatewayResult, context, errorCode, errorId) {\n  const map = routerMessages(gatewayResult, context);\n  const key = errorCode === 'COMMAND_NOT_AVAILABLE' ? 'COMMAND_NOT_AVAILABLE' : errorCode === 'USER_NOT_ACTIVE' ? 'USER_NOT_ACTIVE' : 'ERROR_GENERIC';\n  return routerRender(map.get(key) || map.get('ERROR_GENERIC') || 'Không thể hoàn tất thao tác. Mã lỗi: {error_id}', { error_id: errorId || 'unknown' }).slice(0, 4096);\n}\n\nfunction routerStatusText(gatewayResult) {\n  const response = gatewayResult?.response ?? {};\n  const messages = routerMessages(gatewayResult, {});\n  const lines = [\n    routerRender(messages.get('STATUS_HEADER'), response),\n    routerRender(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),\n    routerRender(messages.get('STATUS_CONFIG_LINE'), response),\n    routerRender(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n    ...(response.active_branches ?? []).map((branch) => routerRender(messages.get('STATUS_BRANCH_LINE'), branch)),\n    routerRender(messages.get('STATUS_MAINTENANCE_LINE'), response),\n  ];\n  return lines.filter(Boolean).join('\\n').slice(0, 4096);\n}\n\nfunction routerHelpText(config) {\n  const rows = (config.CONFIG_LENH ?? []).filter(routerActive).sort((left, right) => Number(routerText(left.ordinal) || 0) - Number(routerText(right.ordinal) || 0));\n  const lines = ['Danh sách lệnh Kiểm kê bia V2:'];\n  for (const row of rows) {\n    const command = routerText(row.command_text) || routerText(row.command_code);\n    const syntax = routerText(row.syntax) || command;\n    lines.push(`${command} — ${routerText(row.description_vi) || 'Chưa có mô tả'}`);\n    lines.push(`  Cú pháp: ${syntax}`);\n    lines.push(`  Quyền: ${routerText(row.permission_code) || 'Không yêu cầu'}`);\n    lines.push(`  Ví dụ: ${routerText(row.example) || syntax}`);\n  }\n  return lines.join('\\n').slice(0, 4096);\n}\n\nfunction routerWithinWindow(row, now) {\n  const current = Date.parse(now);\n  const from = routerText(row.effective_from);\n  const to = routerText(row.effective_to);\n  return (!from || current >= Date.parse(from)) && (!to || current <= Date.parse(to));\n}\n\nfunction routerAuthorized({ actorUserId, command, topic, config, context, now }) {\n  const user = (context.CONFIG_USER ?? []).find((row) => routerText(row.user_id) === routerText(actorUserId));\n  if (!user || !routerActive(user)) return false;\n  if (command === '/trangthai') return true;\n  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === routerText(command).toLowerCase());\n  const permission = routerText(commandRow?.permission_code);\n  if (!permission) return true;\n  if (!topic || !routerActive(topic)) return false;\n  const permissions = new Set((config.CONFIG_PERMISSION ?? []).filter(routerActive).map((row) => routerText(row.permission_code)));\n  if (!permissions.has(permission)) return false;\n  const roles = new Set((config.CONFIG_ROLE ?? []).filter(routerActive).map((row) => routerText(row.role_code)));\n  const mappings = (config.CONFIG_ROLE_PERMISSION ?? []).filter((row) => routerActive(row) && routerText(row.permission_code) === permission);\n  return (config.CONFIG_USER_ROLE ?? []).some((row) => routerActive(row)\n    && routerText(row.user_id) === routerText(actorUserId)\n    && routerWithinWindow(row, now)\n    && (routerText(row.branch_id) === '*' || routerText(row.branch_id) === routerText(topic.branch_id))\n    && roles.has(routerText(row.role_code))\n    && mappings.some((mapping) => routerText(mapping.role_code) === routerText(row.role_code)));\n}\n\nfunction decideRouterResponse({ normalized, gatewayResult, now = new Date().toISOString() } = {}) {\n  const response = gatewayResult?.response ?? {};\n  const config = response.data?.config_tables ?? {};\n  const context = response.data?.context_tables ?? {};\n  const command = routerText(normalized?.command).toLowerCase();\n  const base = { kind: 'DENY', write_plan: [] };\n  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: gatewayResult?.write_plan ?? [] }, text: gatewayResult?.ok ? routerStatusText(gatewayResult) : routerErrorText(gatewayResult, context, response.error_code, response.error_id) };\n  if (!gatewayResult?.ok) return { decision: base, text: routerErrorText(gatewayResult, context, response.error_code, response.error_id) };\n  if (command === '/help') return { decision: { kind: 'HELP', write_plan: [] }, text: routerHelpText(config) };\n  if (command === '/retry') {\n    const errorId = routerText(normalized?.args?.[0]);\n    const user = (context.CONFIG_USER ?? []).find((row) => routerText(row.user_id) === routerText(normalized?.envelope?.actor_user_id));\n    const adminRole = (config.CONFIG_ROLE ?? []).filter(routerActive).map((row) => routerText(row.role_code));\n    const hasAdmin = user && routerActive(user) && (config.CONFIG_USER_ROLE ?? []).some((assignment) => routerActive(assignment) && routerText(assignment.user_id) === routerText(normalized?.envelope?.actor_user_id) && routerText(assignment.branch_id) === '*' && adminRole.includes(routerText(assignment.role_code)) && (config.CONFIG_ROLE_PERMISSION ?? []).some((mapping) => routerActive(mapping) && routerText(mapping.role_code) === routerText(assignment.role_code) && routerText(mapping.permission_code) === 'ADMIN_RETRY'));\n    const error = (context.ERROR_BIA ?? []).find((row) => routerText(row.error_id) === errorId && routerText(row.status).toUpperCase() !== 'RESOLVED');\n    if (!hasAdmin) return { decision: base, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${errorId || 'unknown'}-retry-denied`) };\n    if (!error) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_FOUND', `err-${errorId || 'unknown'}-not-found`) };\n    if (!['YES', 'TRUE', '1'].includes(routerText(error.retryable).toUpperCase())) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_RETRYABLE', errorId) };\n    const operationId = routerText(error.operation_id);\n    const idempotencyKey = routerText(error.request_id) || operationId;\n    return { decision: { kind: 'RETRY', retry: { error_id: errorId, operation_id: operationId, idempotency_key: idempotencyKey }, write_plan: [] }, text: 'Đã tiếp nhận yêu cầu retry.' };\n  }\n  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === command);\n  if (!commandRow) return { decision: base, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}`) };\n  const topic = (config.CONFIG_TOPIC ?? []).find((row) => routerActive(row)\n    && routerText(row.chat_id) === routerText(normalized?.reply_target?.chat_id)\n    && (routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id) || !routerText(row.message_thread_id))\n    && (!routerText(commandRow.topic_type) || routerText(row.topic_type) === routerText(commandRow.topic_type)));\n  if (!routerAuthorized({ actorUserId: normalized?.envelope?.actor_user_id, command, topic, config, context, now })) {\n    return { decision: base, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${routerText(normalized?.envelope?.operation_id)}-user_not_authorized`) };\n  }\n  return {\n    decision: {\n      kind: 'ROUTE',\n      route: {\n        command_code: routerText(commandRow.command_code),\n        topic_type: routerText(commandRow.topic_type),\n        worker_workflow: routerText(commandRow.worker_workflow),\n        branch_id: routerText(topic?.branch_id),\n        permission_code: routerText(commandRow.permission_code) || null,\n        operation_id: routerText(normalized?.envelope?.operation_id),\n        idempotency_key: routerText(normalized?.envelope?.request_id),\n      },\n      write_plan: [],\n    },\n    text: 'Đã tiếp nhận lệnh.',\n  };\n}\n\n\nconst normalized = $('Normalize Telegram Update').first()?.json ?? {};\nconst gatewayResult = $input.first()?.json ?? {};\nconst result = decideRouterResponse({ normalized, gatewayResult, now: new Date().toISOString() });\nreturn [{ json: { envelope: normalized.envelope, reply_target: normalized.reply_target, decision: result.decision, text: result.text } }];"
       },
-      "id": "kkb-v2-format-status-reply",
-      "name": "Format Status Reply",
+      "id": "kkb-v2-router-decision",
+      "name": "Router Decision",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         1040,
-        -120
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const MAX_MESSAGE_LENGTH = 4096;\n\nconst asText = (value) => (value == null ? '' : String(value));\n\nfunction messageMap(tables, locale = 'vi-VN', fallbackMessages = {}) {\n  const map = new Map();\n  for (const [key, value] of Object.entries(fallbackMessages ?? {})) map.set(asText(key), asText(value));\n  for (const row of tables?.CONFIG_THONG_BAO ?? []) {\n    if (asText(row.trang_thai).toUpperCase() === 'INACTIVE') continue;\n    if (asText(row.locale) && asText(row.locale) !== locale) continue;\n    map.set(asText(row.message_key), asText(row.message_text));\n  }\n  return map;\n}\n\nfunction render(template, values) {\n  return asText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => asText(values[key]));\n}\n\nfunction errorTemplateKey(errorCode) {\n  if (errorCode === 'USER_NOT_ACTIVE') return 'USER_NOT_ACTIVE';\n  if (errorCode === 'COMMAND_NOT_AVAILABLE') return 'COMMAND_NOT_AVAILABLE';\n  return 'ERROR_GENERIC';\n}\n\nfunction formatStatus({ gatewayResult, tables, locale = 'vi-VN' } = {}) {\n  if (!gatewayResult?.ok) {\n    const response = gatewayResult?.response ?? {};\n    const messages = messageMap(tables, locale, response.messages);\n    const template = messages.get(errorTemplateKey(response.error_code)) || messages.get('ERROR_GENERIC') || 'ERROR error_id={error_id}';\n    return { text: render(template, { error_id: response.error_id || 'unknown' }).slice(0, MAX_MESSAGE_LENGTH) };\n  }\n\n  const response = gatewayResult.response;\n  const messages = messageMap(tables, locale, response.messages);\n  const lines = [\n    render(messages.get('STATUS_HEADER'), response),\n    render(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),\n    render(messages.get('STATUS_CONFIG_LINE'), response),\n    render(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n  ];\n  for (const branch of response.active_branches ?? []) {\n    lines.push(render(messages.get('STATUS_BRANCH_LINE'), branch));\n  }\n  lines.push(render(messages.get('STATUS_MAINTENANCE_LINE'), response));\n  return { text: lines.filter(Boolean).join('\\n').slice(0, MAX_MESSAGE_LENGTH) };\n}\n\n\n\nconst normalized = $('Normalize Status Update').first()?.json ?? {};\nconst input = $input.first()?.json ?? {};\nconst gatewayResult = input.ok === false ? input : { ...input, ok: false, response: { ...(input.response ?? {}), status: 'ERROR', error_code: 'COMMAND_NOT_AVAILABLE', error_id: 'err-' + (normalized.envelope?.operation_id ?? 'unknown') } };\nconst result = formatStatus({ gatewayResult, tables: {} });\nreturn [{ json: { reply_target: normalized.reply_target, text: result.text } }];"
-      },
-      "id": "kkb-v2-format-command-not-available",
-      "name": "Format Command Not Available",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        780,
-        120
-      ]
+        -40
+      ],
+      "notes": "Reads CONFIG_ROLE/CONFIG_PERMISSION/CONFIG_USER_ROLE/CONFIG_ROLE_PERMISSION/CONFIG_TOPIC/CONFIG_LENH from Config Gateway response."
     },
     {
       "parameters": {
@@ -153,14 +143,14 @@
       "main": [
         [
           {
-            "node": "Normalize Status Update",
+            "node": "Normalize Telegram Update",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Normalize Status Update": {
+    "Normalize Telegram Update": {
       "main": [
         [
           {
@@ -193,7 +183,7 @@
       "main": [
         [
           {
-            "node": "Format Status Reply",
+            "node": "Router Decision",
             "type": "main",
             "index": 0
           }
@@ -204,25 +194,14 @@
       "main": [
         [
           {
-            "node": "Format Command Not Available",
+            "node": "Router Decision",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Status Reply": {
-      "main": [
-        [
-          {
-            "node": "Send Telegram Reply",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format Command Not Available": {
+    "Router Decision": {
       "main": [
         [
           {
