@@ -22,5 +22,9 @@ export const ROUTER_SHEET_DEFINITIONS = Object.freeze({
 });
 
 export const ROUTER_SHEET_NAMES = Object.freeze(Object.keys(ROUTER_SHEET_DEFINITIONS));
-export const ALL_SHEET_DEFINITIONS = Object.freeze({ ...CORE_SHEET_DEFINITIONS, ...ROUTER_SHEET_DEFINITIONS });
+export const AUDIT_SHEET_DEFINITIONS = Object.freeze({
+  EVENT_LOG: ['event_id', 'event_type', 'request_id', 'operation_id', 'actor_user_id', 'branch_id', 'topic_type', 'command', 'outcome', 'error_code', 'created_at', 'trang_thai'],
+});
+export const AUDIT_SHEET_NAMES = Object.freeze(Object.keys(AUDIT_SHEET_DEFINITIONS));
+export const ALL_SHEET_DEFINITIONS = Object.freeze({ ...CORE_SHEET_DEFINITIONS, ...ROUTER_SHEET_DEFINITIONS, ...AUDIT_SHEET_DEFINITIONS });
 export const ALL_SHEET_NAMES = Object.freeze(Object.keys(ALL_SHEET_DEFINITIONS));

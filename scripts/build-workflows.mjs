@@ -7,7 +7,8 @@ import { normalizeCode, decisionCode } from '../workflow-src/WF03_V2_TELEGRAM_RO
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(root, 'workflows');
-const SHEETS = ['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH'];
+const CORE_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA'];
+const ROUTER_SHEETS = ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'];
 const GOOGLE_CREDENTIAL = 'GOOGLE_SHEETS_KKB_V2';
 const TELEGRAM_CREDENTIAL = 'TELEGRAM_KKB_V2';
 
@@ -70,13 +71,19 @@ function baseWorkflow(name, nodes, connections) {
 
 async function buildGatewayWorkflow() {
   const trigger = executeTrigger();
-  const reads = SHEETS.map((sheet, index) => {
+  const reads = CORE_SHEETS.map((sheet, index) => {
     const item = googleSheetNode(`Read ${sheet}`, sheet);
     item.position = pos(260, -360 + index * 90);
     return item;
   });
+  const routerReads = ROUTER_SHEETS.map((sheet, index) => {
+    const item = googleSheetNode(`Read ${sheet}`, sheet);
+    item.position = pos(520, -360 + index * 90);
+    return item;
+  });
   const assemble = node({ name: 'Assemble Config Tables', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await assembleCode() }, position: pos(560, 0) });
   const decision = node({ name: 'Evaluate Config Gateway', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await gatewayCode() }, position: pos(820, 0) });
+  const routerRequested = node({ name: 'Router tables requested?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { boolean: [{ value: "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.length > 0}}", operation: 'isTrue' }] } }, position: pos(520, 520), notes: 'Only read router tabs for commands that request them; /trangthai remains compatible with a core-only Sheet.' });
   const branch = node({ name: 'Gateway OK?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { boolean: [{ value: '={{$json.ok}}', operation: 'isTrue' }] } }, position: pos(1080, 0) });
   const writeRequired = node({ name: 'Write plan required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { number: [{ value1: '={{$json.write_plan.length}}', operation: 'larger', value2: 0 }] } }, position: pos(1330, -100) });
   const prepareOperationRow = node({ name: 'Prepare OPERATION row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(0) }, position: pos(1570, -100) });
@@ -94,11 +101,15 @@ async function buildGatewayWorkflow() {
   const returnStatus = node({ name: 'Return Gateway Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const result = $('Evaluate Config Gateway').first()?.json ?? {}; return [{ json: result }];" }, position: pos(3490, -100) });
   const errorInput = node({ name: 'Prepare Error Handler Input', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: errorInputCode() }, position: pos(1570, 180) });
   const errorCall = node({ name: 'Call Error Handler', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF02_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(1810, 180), notes: 'V2 technical placeholder; select WF02_V2_ERROR_HANDLER after import.' });
-  const nodes = [trigger, ...reads, assemble, decision, branch, writeRequired, prepareOperationRow, prepareOperation, prepareSnapshotRow, prepareSnapshot, commitSnapshotRow, commitSnapshot, commitOperationRow, commitOperation, returnStatus, errorInput, errorCall];
+  const nodes = [trigger, ...reads, routerRequested, ...routerReads, assemble, decision, branch, writeRequired, prepareOperationRow, prepareOperation, prepareSnapshotRow, prepareSnapshot, commitSnapshotRow, commitSnapshot, commitOperationRow, commitOperation, returnStatus, errorInput, errorCall];
   const connections = {};
   link(connections, trigger.name, reads[0].name);
   for (let index = 0; index < reads.length - 1; index += 1) link(connections, reads[index].name, reads[index + 1].name);
-  link(connections, reads.at(-1).name, assemble.name);
+  link(connections, reads.at(-1).name, routerRequested.name);
+  link(connections, routerRequested.name, routerReads[0].name, 0);
+  link(connections, routerRequested.name, assemble.name, 1);
+  for (let index = 0; index < routerReads.length - 1; index += 1) link(connections, routerReads[index].name, routerReads[index + 1].name);
+  link(connections, routerReads.at(-1).name, assemble.name);
   link(connections, assemble.name, decision.name);
   link(connections, decision.name, branch.name);
   link(connections, branch.name, writeRequired.name, 0);
@@ -146,9 +157,13 @@ async function buildRouterWorkflow() {
   const statusCheck = node({ name: 'Status command?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { string: [{ value1: '={{$json.command}}', operation: 'equals', value2: '/trangthai' }] } }, position: pos(520, -80) });
   const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF01_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, -160), notes: 'V2 technical placeholder; select WF01_V2_CONFIG_GATEWAY after import.' });
   const callUnsupportedGateway = node({ name: 'Call Config Gateway - Command Check', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF01_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, 120), notes: 'Reads configured message templates through the Gateway without invoking a business worker.' });
-  const decision = node({ name: 'Router Decision', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await decisionCode() }, position: pos(1040, -40), notes: 'Reads CONFIG_ROLE/CONFIG_PERMISSION/CONFIG_USER_ROLE/CONFIG_ROLE_PERMISSION/CONFIG_TOPIC/CONFIG_LENH from Config Gateway response.' });
+  const decision = node({ name: 'Router Decision', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await decisionCode() }, position: pos(1040, -40), notes: 'Reads Sheet-driven roles/permissions/topics/commands and writes denied-access events to EVENT_LOG.' });
+  const auditCheck = node({ name: 'Router audit write required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { number: [{ value1: '={{$json.decision.write_plan.length}}', operation: 'larger', value2: 0 }] } }, position: pos(1260, 120) });
+  const projectAudit = node({ name: 'Project EVENT_LOG row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const entry = $json.decision?.write_plan?.[0]; if (!entry) return []; return [{ json: entry.row }];" }, position: pos(1480, 120) });
+  const appendAudit = googleSheetNode('Append EVENT_LOG', 'EVENT_LOG', 'append', { columns: { mappingMode: 'autoMapInputData' } });
+  appendAudit.position = pos(1700, 120);
   const send = node({ name: 'Send Telegram Reply', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'message', operation: 'sendMessage', chatId: '={{$json.reply_target.chat_id}}', text: '={{$json.text}}', additionalFields: { message_thread_id: '={{$json.reply_target.message_thread_id}}' } }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(1300, -40) });
-  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, decision, send];
+  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, decision, auditCheck, projectAudit, appendAudit, send];
   const connections = {};
   link(connections, trigger.name, normalize.name);
   link(connections, normalize.name, statusCheck.name);
@@ -156,7 +171,11 @@ async function buildRouterWorkflow() {
   link(connections, statusCheck.name, callUnsupportedGateway.name, 1);
   link(connections, callGateway.name, decision.name);
   link(connections, callUnsupportedGateway.name, decision.name);
-  link(connections, decision.name, send.name);
+  link(connections, decision.name, auditCheck.name);
+  link(connections, auditCheck.name, projectAudit.name, 0);
+  link(connections, auditCheck.name, send.name, 1);
+  link(connections, projectAudit.name, appendAudit.name);
+  link(connections, appendAudit.name, send.name);
   return baseWorkflow('WF03_V2_TELEGRAM_ROUTER', nodes, connections);
 }
 

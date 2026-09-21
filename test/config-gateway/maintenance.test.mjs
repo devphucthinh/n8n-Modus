@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateConfigGateway } from '../../src/config-gateway/evaluate-config.mjs';
 import { CORE_SHEET_DEFINITIONS } from '../../src/contracts/core-sheet-schema.mjs';
-import { envelope, FIXED_NOW, validConfig } from '../fixtures/config/valid-config.mjs';
+import { envelope, FIXED_NOW, validConfig, validConfigWithRouterTables } from '../fixtures/config/valid-config.mjs';
 
 const completeRow = (sheetName, values) => Object.fromEntries(CORE_SHEET_DEFINITIONS[sheetName].map((column) => [column, values[column] ?? '']));
 
@@ -23,6 +23,16 @@ test('blocks new operations during maintenance', () => {
   assert.equal(result.ok, false);
   assert.equal(result.response.error_code, 'CONFIG_MAINTENANCE');
   assert.deepEqual(result.write_plan, []);
+});
+
+test('allows the sheet-driven help catalog during maintenance', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_VERSION[0].maintenance_mode = 'YES';
+  const helpEnvelope = { ...envelope, payload: { command: '/help', intent: 'READ_HELP', required_sheet_names: ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'] } };
+  const result = evaluateConfigGateway({ envelope: helpEnvelope, tables, now: FIXED_NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.response.state, 'MAINTENANCE');
+  assert.equal(result.response.data.config_tables.CONFIG_LENH.length, 7);
 });
 
 test('treats a request without an explicit status intent as a new operation', () => {

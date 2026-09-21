@@ -11,7 +11,7 @@ test('gateway exposes requested router tables but does not require them for stat
     now: FIXED_NOW,
   });
   assert.equal(result.ok, true);
-  assert.equal(result.response.data.config_tables.CONFIG_LENH.length, 3);
+  assert.equal(result.response.data.config_tables.CONFIG_LENH.length, 7);
 });
 
 test('gateway keeps status-only calls compatible when router sheets are absent', () => {

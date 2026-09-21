@@ -1,4 +1,4 @@
-import { ALL_SHEET_DEFINITIONS, CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, ROUTER_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
+import { ALL_SHEET_DEFINITIONS, AUDIT_SHEET_NAMES, CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, ROUTER_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
 import { sha256 } from './sha256.mjs';
 
 const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', ...ROUTER_SHEET_NAMES];
@@ -81,7 +81,7 @@ function requestedSheetNames(envelope) {
 
 function validateRequestedTables(tables, envelope, requested) {
   for (const sheetName of requested) {
-    if (!ROUTER_SHEET_NAMES.includes(sheetName)) {
+    if (![...ROUTER_SHEET_NAMES, ...AUDIT_SHEET_NAMES].includes(sheetName)) {
       return makeFailure('CONFIG_SHEET_NOT_ALLOWED', `Unsupported requested configuration sheet ${sheetName}`, envelope, { sheet_name: sheetName });
     }
     const rows = tableRows(tables, sheetName);
@@ -262,7 +262,7 @@ function requestedConfigTables(tables, requested) {
 
 function contextConfigTables(tables, requested) {
   if (requested.length === 0) return {};
-  return Object.fromEntries(['CONFIG_USER', 'CONFIG_BRANCH', 'CONFIG_THONG_BAO', 'ERROR_BIA'].map((sheetName) => [sheetName, (tableRows(tables, sheetName) ?? []).map((row) => ({ ...row }))]));
+  return Object.fromEntries(['CONFIG_USER', 'CONFIG_BRANCH', 'CONFIG_THONG_BAO', 'ERROR_BIA', 'OPERATION', 'EVENT_LOG'].map((sheetName) => [sheetName, (tableRows(tables, sheetName) ?? []).map((row) => ({ ...row }))]));
 }
 
 function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables = {}, contextTables = {} }) {
@@ -328,7 +328,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const operationType = asText(envelope.payload?.intent || envelope.operation_type || (asText(envelope.payload?.command).toLowerCase().startsWith('/trangthai') ? 'READ_STATUS' : 'START_OPERATION')).toUpperCase();
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
 
-  if (maintenanceMode === 'YES' && !['READ_STATUS', 'COMMAND_NOT_AVAILABLE'].includes(operationType)) {
+  if (maintenanceMode === 'YES' && !['READ_STATUS', 'READ_HELP', 'COMMAND_NOT_AVAILABLE'].includes(operationType)) {
     return decorateFailure(makeFailure('CONFIG_MAINTENANCE', 'Configuration is in maintenance mode', normalizedEnvelope, { maintenance_mode: maintenanceMode }));
   }
   const activeBranches = (tableRows(tables, 'CONFIG_BRANCH') ?? [])

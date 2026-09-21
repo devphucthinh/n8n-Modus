@@ -17,3 +17,41 @@ test('unknown command is denied without a worker call or write plan', () => {
   assert.equal(result.decision.kind, 'DENY');
   assert.equal(result.decision.write_plan.length, 0);
 });
+
+test('uses the configured acknowledgement and rejects a repeated committed operation', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_THONG_BAO.find((row) => row.message_key === 'ROUTER_COMMAND_ACCEPTED').message_text = 'Đã nhận theo cấu hình.';
+  const first = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+  assert.match(first.reply.text, /Đã nhận theo cấu hình/);
+  tables.OPERATION.push({ operation_id: 'tg-9001', request_id: 'tg-9001', operation_type: 'ROUTE_COMMAND', idempotency_key: 'tg-9001', expected_row_count: '1', actual_row_count: '1', checksum: 'fp', error_id: '', created_at: FIXED_NOW, updated_at: FIXED_NOW, status: 'COMMITTED' });
+  const repeated = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+  assert.equal(repeated.decision.kind, 'DUPLICATE');
+  assert.equal(repeated.decision.write_plan.length, 0);
+});
+
+test('records an opaque access-denied event for an active user without permission', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_USER_ROLE = [];
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.write_plan[0].sheet, 'EVENT_LOG');
+  assert.equal(result.decision.write_plan[0].row.outcome, 'DENIED');
+  assert.equal(result.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
+});
+
+test('routes a configured callback token by command_code and preserves callback identity', () => {
+  const tables = validConfigWithRouterTables();
+  const update = {
+    update_id: 9003,
+    callback_query: {
+      id: 'callback-9003',
+      from: { id: '10001' },
+      data: 'CMD_KIEM_KE',
+      message: { chat: { id: '-100100' }, message_thread_id: '77' },
+    },
+  };
+  const result = runRouterFlow({ update, tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'ROUTE');
+  assert.equal(result.envelope.payload.callback_id, 'callback-9003');
+  assert.equal(result.decision.route.command_code, 'CMD_KIEM_KE');
+});

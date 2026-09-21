@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - WF03 is the only Telegram Trigger for the bot; workers receive the standard envelope.
-- Google Sheets is the authoritative source for users, roles, permissions, topics, commands, and message text; no changeable business rule is hard-coded in n8n.
+- Google Sheets is the authoritative source for users, roles, permissions, topics, commands, message text, and access audit; no changeable business rule is hard-coded in n8n.
 - Machine codes use uppercase ASCII identifiers; Vietnamese labels are display-only.
 - `/trangthai` is read-only for every active configured user; every other command needs its configured permission.
 - `branch_id='*'` is the global role scope; inactive or unknown users are denied without revealing roles, branches, or configuration.
@@ -35,7 +35,7 @@
 
 **Interfaces:**
 - `ROUTER_SHEET_DEFINITIONS` exports exact columns for `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_TOPIC`, and `CONFIG_LENH`.
-- `evaluateConfigGateway({ envelope, tables, now })` accepts `envelope.payload.required_sheet_names` and returns active requested rows under `response.data.config_tables` plus the immutable `config_snapshot`.
+- `evaluateConfigGateway({ envelope, tables, now })` accepts `envelope.payload.required_sheet_names` and returns active requested rows under `response.data.config_tables`, runtime auth context and the immutable `config_snapshot`.
 
 - [ ] **Step 1: Write failing contract tests**
 
@@ -69,7 +69,7 @@ Expected: FAIL because the router definitions and requested-table response do no
 
 - [ ] **Step 3: Implement the minimal contract extension**
 
-Add the six router tables as optional requested configuration (not part of the nine required Issue #2 core sheets). Validate their columns and CONFIG_SCHEMA coverage only when requested, include their active rows in the gateway fingerprint/snapshot, and expose them through `response.data.config_tables`. Extend the fixture/template with deterministic rows for six commands, two roles, permissions, a branch-scoped assignment, and a topic mapping.
+Add the six router tables plus optional `EVENT_LOG` audit sheet as requested tables (not part of the nine required Issue #2 core sheets). Validate their columns and CONFIG_SCHEMA coverage only when requested, include only business config in the gateway fingerprint/snapshot, and expose active rows through `response.data.config_tables` plus runtime auth context. Extend the fixture/template with deterministic rows for commands, roles, permissions, a branch-scoped assignment, a topic mapping, and denied-access audit.
 
 - [ ] **Step 4: Run focused and regression tests**
 
@@ -261,7 +261,7 @@ git commit -m "feat: compose sheet-driven telegram router decisions"
 
 **Interfaces:**
 - `WF03_V2_TELEGRAM_ROUTER.json` contains exactly one Telegram Trigger, a self-contained normalization/router Code node, Config Gateway call, configured reply node, and no worker Telegram Trigger.
-- The Execute Workflow input carries `payload.required_sheet_names` for the six router tables; the generated artifact uses only `PASTE_WF01_WORKFLOW_ID`, `GOOGLE_SHEETS_KKB_V2`, and `TELEGRAM_KKB_V2` technical placeholders.
+- The Execute Workflow input carries `payload.required_sheet_names` for the six router tables plus `EVENT_LOG`; router/audit reads are conditional so `/trangthai` remains core-only. The generated artifact uses only `PASTE_WF01_WORKFLOW_ID`, `GOOGLE_SHEETS_KKB_V2`, and `TELEGRAM_KKB_V2` technical placeholders.
 
 - [ ] **Step 1: Add artifact assertions before changing the builder**
 

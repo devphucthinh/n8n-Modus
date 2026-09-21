@@ -9,7 +9,8 @@ export function getActiveCommands(tables, locale = 'vi-VN') {
 
 export function formatHelp({ tables, locale = 'vi-VN' } = {}) {
   const commands = getActiveCommands(tables, locale);
-  const lines = ['Danh sách lệnh Kiểm kê bia V2:'];
+  const header = (tables?.CONFIG_THONG_BAO ?? []).filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE' && asText(row.locale || locale) === locale && asText(row.message_key) === 'HELP_HEADER').at(-1)?.message_text || 'Danh sách lệnh Kiểm kê bia V2:';
+  const lines = [header];
   for (const row of commands) {
     const command = asText(row.command_text) || asText(row.command_code);
     const syntax = asText(row.syntax) || command;

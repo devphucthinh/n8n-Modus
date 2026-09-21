@@ -6,7 +6,7 @@ Tài liệu này là handoff triển khai cho PR của issue #3. Nó không ch�
 
 - WF03 là Telegram ingress duy nhất và nhận `message`, `edited_message`, `callback_query`.
 - Mỗi update được chuẩn hóa thành envelope có `request_id=operation_id=tg-<update_id>`; callback, bot suffix, tham số và forum thread được giữ lại.
-- Config Gateway đọc thêm sáu tab router khi request không phải `/trangthai`: `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_TOPIC`, `CONFIG_LENH`.
+- Config Gateway đọc thêm sáu tab router khi request không phải `/trangthai`: `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_TOPIC`, `CONFIG_LENH`, và đọc `EVENT_LOG` để ghi access-denied audit.
 - Router trả quyết định thuần (`STATUS`, `HELP`, `ROUTE`, `RETRY`, `DENY`) trước khi một worker được gọi. Workflow export không chứa danh sách role, permission, topic, worker hoặc command nghiệp vụ.
 - `/help` lấy lệnh active từ `CONFIG_LENH`, sắp theo `ordinal`, hiển thị command, cú pháp, mô tả, quyền và ví dụ.
 - `/trangthai` vẫn là đường đọc trạng thái cho user active; user unknown/inactive nhận cùng một denial an toàn.
@@ -14,7 +14,7 @@ Tài liệu này là handoff triển khai cho PR của issue #3. Nó không ch�
 
 ## Google Sheet cần tạo/cấu hình
 
-Tạo sáu tab sau, đúng header ASCII và đúng thứ tự cột:
+Tạo sáu tab cấu hình sau, đúng header ASCII và đúng thứ tự cột:
 
 | Tab | Header |
 |---|---|
@@ -24,6 +24,10 @@ Tạo sáu tab sau, đúng header ASCII và đúng thứ tự cột:
 | `CONFIG_ROLE_PERMISSION` | `role_permission_id`, `role_code`, `permission_code`, `trang_thai` |
 | `CONFIG_TOPIC` | `topic_id`, `branch_id`, `topic_type`, `chat_id`, `message_thread_id`, `trang_thai` |
 | `CONFIG_LENH` | `command_code`, `command_text`, `syntax`, `description_vi`, `permission_code`, `topic_type`, `worker_workflow`, `example`, `ordinal`, `trang_thai` |
+
+Tạo thêm tab vận hành `EVENT_LOG` để audit truy cập bị từ chối:
+
+`event_id`, `event_type`, `request_id`, `operation_id`, `actor_user_id`, `branch_id`, `topic_type`, `command`, `outcome`, `error_code`, `created_at`, `trang_thai`.
 
 Quy tắc dữ liệu:
 
@@ -35,6 +39,7 @@ Quy tắc dữ liệu:
 6. Topic cần khớp `chat_id`, `message_thread_id` và `topic_type`; không suy đoán topic từ tên hiển thị.
 7. `/trangthai` và `/help` có thể để `permission_code` trống. `/retry` yêu cầu permission `ADMIN_RETRY` và role admin có branch `*`.
 8. Sau khi thêm sáu tab, thêm schema rule tương ứng vào `CONFIG_SCHEMA`; tăng `config_version` (ví dụ `v1.1`) và ghi chú thay đổi trong `CONFIG_VERSION`.
+9. Thêm schema rule cho `EVENT_LOG`; không sửa trực tiếp các dòng audit đã commit.
 
 Dữ liệu mẫu an toàn để bắt đầu:
 
@@ -45,7 +50,7 @@ Dữ liệu mẫu an toàn để bắt đầu:
 
 ## n8n import và liên kết
 
-1. Tạo hoặc chọn test copy của Google Sheet và hoàn thành sáu tab ở trên trước khi import WF01.
+1. Tạo hoặc chọn test copy của Google Sheet và hoàn thành sáu tab cấu hình cùng `EVENT_LOG` trước khi import WF01.
 2. Import theo thứ tự: `WF01_V2_CONFIG_GATEWAY.json` → `WF02_V2_ERROR_HANDLER.json` → `WF03_V2_TELEGRAM_ROUTER.json`.
 3. Chọn credential đúng tên `GOOGLE_SHEETS_KKB_V2` cho Google Sheets và `TELEGRAM_KKB_V2` cho Telegram.
 4. Trong hai node `Call Config Gateway` của WF03, thay `PASTE_WF01_WORKFLOW_ID` bằng workflow ID thật của WF01. Không thay đổi logic bằng cách nhập command/permission trực tiếp vào Code node.
@@ -68,7 +73,7 @@ Ghi execution ID và Telegram message ID, không ghi giá trị bí mật:
 | `/retry <error_id>` retryable bởi ADMIN | Giữ operation/idempotency key gốc |
 | `/retry` non-retryable hoặc không phải ADMIN | Denial an toàn, không retry |
 
-Nếu sáu tab chưa tồn tại trên file live, không active bản export mới: các node đọc tab của WF01 sẽ không có dữ liệu router. Khi đó hãy tạo tab trên bản test trước, chạy smoke, rồi mới promote cấu hình live bằng một `config_version` mới.
+Các node đọc router/audit chỉ chạy khi request có `required_sheet_names`; vì vậy `/trangthai` vẫn chạy với chín tab core. Với command khác, nếu các tab router hoặc `EVENT_LOG` chưa tồn tại, không active bản export mới: hãy tạo tab trên bản test trước, chạy smoke, rồi mới promote cấu hình live bằng một `config_version` mới.
 
 ## Rollback và điều kiện đóng issue
 
