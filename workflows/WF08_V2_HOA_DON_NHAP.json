@@ -1,0 +1,133 @@
+{
+  "name": "WF08_V2_HOA_DON_NHAP",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "kkb-v2-execute-workflow-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\nif (!input.request_id || !input.operation_id) {\n  return [{ json: { ok: false, status: 'ERROR', error_code: 'ENVELOPE_INVALID' } }];\n}\nreturn [{ json: { ...input, ok: true, status: 'READY_FOR_PURCHASE_ADAPTERS' } }];"
+      },
+      "id": "kkb-v2-validate-purchase-envelope",
+      "name": "Validate Purchase Envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "PASTE_WF01_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-call-config-gateway",
+      "name": "Call Config Gateway",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        0
+      ],
+      "notes": "Read the validated config snapshot through WF01_V2_CONFIG_GATEWAY; do not read Google Sheets directly here."
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\nreturn [{ json: {\n  ...input,\n  adapter_ports: {\n    source_evidence_store: 'GOOGLE_DRIVE_KKB_V2',\n    ocr_provider: 'GEMINI_KKB_V2',\n    ledger_store: 'GOOGLE_SHEETS_KKB_V2',\n  },\n  status: input.ok === false ? 'ERROR' : 'READY_FOR_ADAPTERS',\n} }];"
+      },
+      "id": "kkb-v2-build-purchase-adapter-plan",
+      "name": "Build Purchase Adapter Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        0
+      ],
+      "notes": "Port boundary only. Configure credential names GOOGLE_DRIVE_KKB_V2, GEMINI_KKB_V2, and GOOGLE_SHEETS_KKB_V2 after import; no secrets are exported."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $input.first()?.json ?? {} }];"
+      },
+      "id": "kkb-v2-return-purchase-ingestion-contract",
+      "name": "Return Purchase Ingestion Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Purchase Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Purchase Envelope": {
+      "main": [
+        [
+          {
+            "node": "Call Config Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Config Gateway": {
+      "main": [
+        [
+          {
+            "node": "Build Purchase Adapter Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Purchase Adapter Plan": {
+      "main": [
+        [
+          {
+            "node": "Return Purchase Ingestion Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "kkb-v2-wf08-v2-hoa-don-nhap-version",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "tags": []
+}
