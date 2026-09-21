@@ -109,3 +109,61 @@ export function validConfig() {
     ERROR_BIA: [],
   };
 }
+
+export const ROUTER_SHEET_DEFINITIONS = Object.freeze({
+  CONFIG_ROLE: ['role_code', 'role_name', 'description_vi', 'trang_thai'],
+  CONFIG_PERMISSION: ['permission_code', 'permission_name', 'description_vi', 'trang_thai'],
+  CONFIG_USER_ROLE: ['user_role_id', 'user_id', 'role_code', 'branch_id', 'effective_from', 'effective_to', 'trang_thai'],
+  CONFIG_ROLE_PERMISSION: ['role_permission_id', 'role_code', 'permission_code', 'trang_thai'],
+  CONFIG_TOPIC: ['topic_id', 'branch_id', 'topic_type', 'chat_id', 'message_thread_id', 'trang_thai'],
+  CONFIG_LENH: ['command_code', 'command_text', 'syntax', 'description_vi', 'permission_code', 'topic_type', 'worker_workflow', 'example', 'ordinal', 'trang_thai'],
+});
+
+const routerRows = {
+  CONFIG_ROLE: [
+    ['ADMIN', 'Quản trị', 'Toàn quyền kỹ thuật', 'ACTIVE'],
+    ['KIEM_KE', 'Kiểm kê', 'Thực hiện kiểm kê', 'ACTIVE'],
+  ],
+  CONFIG_PERMISSION: [
+    ['ADMIN_RETRY', 'Retry lỗi', 'Cho phép retry lỗi', 'ACTIVE'],
+    ['KIEM_KE_WRITE', 'Ghi kiểm kê', 'Cho phép ghi kiểm kê', 'ACTIVE'],
+  ],
+  CONFIG_USER_ROLE: [
+    ['ur-10001', '10001', 'KIEM_KE', 'CN_HN', FIXED_NOW, '', 'ACTIVE'],
+    ['ur-admin', 'admin-1', 'ADMIN', '*', FIXED_NOW, '', 'ACTIVE'],
+  ],
+  CONFIG_ROLE_PERMISSION: [
+    ['rp-1', 'KIEM_KE', 'KIEM_KE_WRITE', 'ACTIVE'],
+    ['rp-2', 'ADMIN', 'ADMIN_RETRY', 'ACTIVE'],
+  ],
+  CONFIG_TOPIC: [
+    ['topic-kiem-ke', 'CN_HN', 'KIEM_KE', '-100100', '77', 'ACTIVE'],
+  ],
+  CONFIG_LENH: [
+    ['CMD_KIEM_KE', '/kiemke', '/kiemke', 'Mở phiên kiểm kê', 'KIEM_KE_WRITE', 'KIEM_KE', 'WF05_V2_MO_PHIEN_KIEM_KE', '/kiemke', '10', 'ACTIVE'],
+    ['CMD_HELP', '/help', '/help', 'Hiển thị danh sách lệnh', '', '', '', '/help', '1', 'ACTIVE'],
+    ['CMD_STATUS', '/trangthai', '/trangthai', 'Hiển thị trạng thái', '', '', '', '/trangthai', '2', 'ACTIVE'],
+    ['INACTIVE_COMMAND', '/an', '/an', 'Không hiển thị', '', '', '', '/an', '99', 'INACTIVE'],
+  ],
+};
+
+export function validConfigWithRouterTables() {
+  const tables = validConfig();
+  const definitions = Object.fromEntries(Object.entries(ROUTER_SHEET_DEFINITIONS).map(([sheetName, columns]) => [sheetName, columns]));
+  const schemaRows = Object.entries(definitions).flatMap(([sheetName, columns]) => columns.map((columnName, ordinal) => rowsFrom(
+    SCHEMA_COLUMNS,
+    [[`rule-${sheetName}-${columnName}`, '1.0', sheetName, columnName, columnName === 'ordinal' ? 'INTEGER' : 'STRING', 'NO', '', '', '', '', String(ordinal + 1), `Fixture ${sheetName}.${columnName}`, 'ACTIVE']],
+  )[0]));
+  tables.CONFIG_SCHEMA = [...tables.CONFIG_SCHEMA, ...schemaRows];
+  for (const [sheetName, columns] of Object.entries(ROUTER_SHEET_DEFINITIONS)) {
+    tables[sheetName] = rowsFrom(columns, routerRows[sheetName]);
+  }
+  tables.ERROR_BIA = rowsFrom([
+    'error_id', 'error_code', 'error_class', 'retryable', 'message_safe', 'workflow', 'node', 'operation_id', 'request_id', 'config_version', 'fingerprint', 'status', 'created_at', 'resolved_at',
+  ], [['err-42', 'TEMPORARY', 'TRANSIENT', 'YES', 'Tạm thời', 'WF05', 'Node', 'op-original-42', 'tg-original-42', 'v1', 'fp', 'OPEN', FIXED_NOW, '']]);
+  return tables;
+}
+
+export function topicFor(topicType = 'KIEM_KE') {
+  return validConfigWithRouterTables().CONFIG_TOPIC.find((row) => row.topic_type === topicType);
+}

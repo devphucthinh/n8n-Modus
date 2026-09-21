@@ -1,4 +1,4 @@
-import { CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES } from '../../src/contracts/core-sheet-schema.mjs';
+import { CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, ROUTER_SHEET_DEFINITIONS, ROUTER_SHEET_NAMES } from '../../src/contracts/core-sheet-schema.mjs';
 
 const fakeRows = {
   CONFIG_VERSION: [{ config_version: 'v1', schema_version: '1.0', maintenance_mode: 'NO', changed_by: 'SET_IN_GOOGLE_SHEET', changed_at: '2026-09-19T01:00:00.000Z', change_note: 'baseline', trang_thai: 'ACTIVE' }],
@@ -10,10 +10,34 @@ const fakeRows = {
   CONFIG_SNAPSHOT: [],
   OPERATION: [],
   ERROR_BIA: [],
+  CONFIG_ROLE: [
+    { role_code: 'ROLE_CODE_CONFIGURE', role_name: 'Tên vai trò', description_vi: 'Mô tả vai trò', trang_thai: 'ACTIVE' },
+  ],
+  CONFIG_PERMISSION: [
+    { permission_code: 'PERMISSION_CODE_CONFIGURE', permission_name: 'Tên quyền', description_vi: 'Mô tả quyền', trang_thai: 'ACTIVE' },
+  ],
+  CONFIG_USER_ROLE: [
+    { user_role_id: 'USER_ROLE_ID_CONFIGURE', user_id: 'USER_ID_CONFIGURE', role_code: 'ROLE_CODE_CONFIGURE', branch_id: 'BRANCH_ID_CONFIGURE', effective_from: '2026-01-01T00:00:00.000Z', effective_to: '', trang_thai: 'ACTIVE' },
+  ],
+  CONFIG_ROLE_PERMISSION: [
+    { role_permission_id: 'ROLE_PERMISSION_ID_CONFIGURE', role_code: 'ROLE_CODE_CONFIGURE', permission_code: 'PERMISSION_CODE_CONFIGURE', trang_thai: 'ACTIVE' },
+  ],
+  CONFIG_TOPIC: [
+    { topic_id: 'TOPIC_ID_CONFIGURE', branch_id: 'BRANCH_ID_CONFIGURE', topic_type: 'TOPIC_TYPE_CONFIGURE', chat_id: 'CHAT_ID_CONFIGURE', message_thread_id: 'THREAD_ID_CONFIGURE', trang_thai: 'ACTIVE' },
+  ],
+  CONFIG_LENH: [
+    { command_code: 'COMMAND_CODE_CONFIGURE', command_text: '/lenh', syntax: '/lenh [tham_so]', description_vi: 'Mô tả lệnh', permission_code: 'PERMISSION_CODE_CONFIGURE', topic_type: 'TOPIC_TYPE_CONFIGURE', worker_workflow: 'WORKFLOW_ID_CONFIGURE', example: '/lenh vi_du', ordinal: '1', trang_thai: 'ACTIVE' },
+  ],
 };
 
 export const CORE_CONFIG_TEMPLATE = Object.freeze(Object.fromEntries(CORE_SHEET_NAMES.map((sheetName) => [sheetName, Object.freeze({
   sheet_name: sheetName,
   columns: Object.freeze([...CORE_SHEET_DEFINITIONS[sheetName]]),
+  rows: Object.freeze((fakeRows[sheetName] ?? []).map((entry) => Object.freeze({ ...entry }))),
+})])));
+
+export const ROUTER_CONFIG_TEMPLATE = Object.freeze(Object.fromEntries(ROUTER_SHEET_NAMES.map((sheetName) => [sheetName, Object.freeze({
+  sheet_name: sheetName,
+  columns: Object.freeze([...ROUTER_SHEET_DEFINITIONS[sheetName]]),
   rows: Object.freeze((fakeRows[sheetName] ?? []).map((entry) => Object.freeze({ ...entry }))),
 })])));

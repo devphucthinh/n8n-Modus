@@ -11,3 +11,16 @@ export const CORE_SHEET_DEFINITIONS = Object.freeze({
 });
 
 export const CORE_SHEET_NAMES = Object.freeze(Object.keys(CORE_SHEET_DEFINITIONS));
+
+export const ROUTER_SHEET_DEFINITIONS = Object.freeze({
+  CONFIG_ROLE: ['role_code', 'role_name', 'description_vi', 'trang_thai'],
+  CONFIG_PERMISSION: ['permission_code', 'permission_name', 'description_vi', 'trang_thai'],
+  CONFIG_USER_ROLE: ['user_role_id', 'user_id', 'role_code', 'branch_id', 'effective_from', 'effective_to', 'trang_thai'],
+  CONFIG_ROLE_PERMISSION: ['role_permission_id', 'role_code', 'permission_code', 'trang_thai'],
+  CONFIG_TOPIC: ['topic_id', 'branch_id', 'topic_type', 'chat_id', 'message_thread_id', 'trang_thai'],
+  CONFIG_LENH: ['command_code', 'command_text', 'syntax', 'description_vi', 'permission_code', 'topic_type', 'worker_workflow', 'example', 'ordinal', 'trang_thai'],
+});
+
+export const ROUTER_SHEET_NAMES = Object.freeze(Object.keys(ROUTER_SHEET_DEFINITIONS));
+export const ALL_SHEET_DEFINITIONS = Object.freeze({ ...CORE_SHEET_DEFINITIONS, ...ROUTER_SHEET_DEFINITIONS });
+export const ALL_SHEET_NAMES = Object.freeze(Object.keys(ALL_SHEET_DEFINITIONS));
