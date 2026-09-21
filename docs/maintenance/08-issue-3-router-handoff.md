@@ -5,14 +5,15 @@ Tài liệu này là handoff triển khai cho PR của issue #3. Nó không ch�
 ## Phạm vi đã triển khai
 
 - WF03 là Telegram ingress duy nhất và nhận `message`, `edited_message`, `callback_query`.
-- Mỗi update được chuẩn hóa thành envelope có `request_id=operation_id=tg-<update_id>`; callback, bot suffix, tham số và forum thread được giữ lại. Callback có thêm `payload.idempotency_key=tg-callback-<callback_id>` để chống xử lý lặp khi Telegram phát lại với `update_id` khác.
+- Mỗi update được chuẩn hóa thành envelope có `request_id=operation_id=tg-<update_id>`; callback, bot suffix, tham số và forum thread được giữ lại. Actor của callback lấy từ `callback_query.from`, không lấy sender của message chứa nút. Callback có thêm `payload.idempotency_key=tg-callback-<callback_id>` để chống xử lý lặp khi Telegram phát lại với `update_id` khác.
 - Config Gateway đọc thêm sáu tab router khi request không phải `/trangthai`: `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_TOPIC`, `CONFIG_LENH`, và đọc `EVENT_LOG` để ghi access-denied audit.
 - Router trả quyết định thuần (`STATUS`, `HELP`, `ROUTE`, `RETRY`, `DENY`) trước khi một worker được gọi. Workflow export không chứa danh sách role, permission, topic, worker hoặc command nghiệp vụ.
 - `/help` lấy lệnh active từ `CONFIG_LENH`, sắp theo `ordinal`, hiển thị command, cú pháp, mô tả, quyền và ví dụ.
 - `/trangthai` vẫn là đường đọc trạng thái cho user active; user unknown/inactive nhận cùng một denial an toàn.
 - `/retry <error_id>` chỉ nhận lỗi retryable và giữ lại `operation_id` cùng `request_id`/idempotency key ban đầu.
 - Access-denied audit dùng `event_id` xác định theo idempotency key và không append lần hai cho cùng một update/callback.
-- WF03 khôi phục `reply_target`/`text` sau khi ghi `EVENT_LOG`; callback query được node `Answer Telegram Callback` xác nhận bằng Telegram `answerQuery`.
+- WF03 tạo reservation `OPERATION` trạng thái `PREPARED` trước ACK cho route; node Google Sheets dùng `appendOrUpdate` theo `idempotency_key`, lần lặp kiểm tra cả `PREPARED` và `COMMITTED`. Access audit dùng `appendOrUpdate` theo `event_id`.
+- WF03 khôi phục `reply_target`/`text` sau khi ghi `EVENT_LOG` hoặc reservation; `/help` dài được chia thành nhiều tin nhắn Telegram để không cắt mất lệnh. Callback query được node `Answer Telegram Callback` xác nhận bằng Telegram `answerQuery`.
 - `/trangthai` không đưa write plan ledger của Gateway vào nhánh audit Telegram.
 
 ## Google Sheet cần tạo/cấu hình
@@ -39,7 +40,7 @@ Quy tắc dữ liệu:
 3. `CONFIG_USER_ROLE.branch_id='*'` là phạm vi toàn hệ thống; giá trị khác phải trùng branch của topic.
 4. User phải tồn tại và `ACTIVE` trong `CONFIG_USER`; user unknown/inactive bị từ chối cùng một thông báo chung.
 5. Mỗi command cần một dòng `CONFIG_LENH`. Lệnh cần quyền phải có mapping qua `CONFIG_ROLE_PERMISSION` tới permission `ACTIVE`.
-6. Topic cần khớp `chat_id`, `message_thread_id` và `topic_type`; không suy đoán topic từ tên hiển thị.
+6. Topic cần khớp chính xác `chat_id`, `message_thread_id` và `topic_type`; không dùng dòng wildcard thread để suy đoán topic từ tên hiển thị.
 7. `/trangthai` và `/help` có thể để `permission_code` trống. `/retry` yêu cầu permission `ADMIN_RETRY` và role admin có branch `*`.
 8. Sau khi thêm sáu tab, thêm schema rule tương ứng vào `CONFIG_SCHEMA`; tăng `config_version` (ví dụ `v1.1`) và ghi chú thay đổi trong `CONFIG_VERSION`.
 9. Thêm schema rule cho `EVENT_LOG`; không sửa trực tiếp các dòng audit đã commit.
@@ -76,8 +77,11 @@ Ghi execution ID và Telegram message ID, không ghi giá trị bí mật:
 | Gửi lại cùng callback ID nhưng `update_id` khác | Không route lần hai; cùng `payload.idempotency_key` |
 | `/retry <error_id>` retryable bởi ADMIN | Giữ operation/idempotency key gốc |
 | `/retry` non-retryable hoặc không phải ADMIN | Denial an toàn, không retry |
+| Callback ID lặp với `update_id` khác | Không tạo reservation thứ hai; Telegram nhận `answerQuery` |
 
-Các node đọc router/audit chỉ chạy khi request có `required_sheet_names`; vì vậy `/trangthai` vẫn chạy với chín tab core. Với command khác, nếu các tab router hoặc `EVENT_LOG` chưa tồn tại, không active bản export mới: hãy tạo tab trên bản test trước, chạy smoke, rồi mới promote cấu hình live bằng một `config_version` mới.
+Các node đọc router/audit chỉ chạy khi request có `required_sheet_names`; vì vậy `/trangthai` của user active vẫn chạy với chín tab core. Với command khác, nếu các tab router hoặc `EVENT_LOG` chưa tồn tại, không active bản export mới: hãy tạo tab trên bản test trước, chạy smoke, rồi mới promote cấu hình live bằng một `config_version` mới. `/trangthai` của user inactive cần `EVENT_LOG` để ghi access audit; nếu tab chưa có, chỉ nhận denial an toàn và phải bổ sung tab trước release.
+
+Bản ghi bằng chứng live điền tại `docs/testing/issue-3-evidence.md`.
 
 ## Rollback và điều kiện đóng issue
 

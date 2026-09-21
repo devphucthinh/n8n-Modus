@@ -39,3 +39,16 @@ test('gateway keeps audit context on inactive-user failures', () => {
   assert.equal(result.response.error_code, 'USER_NOT_ACTIVE');
   assert.ok(result.response.data.context_tables.EVENT_LOG);
 });
+
+test('gateway context is projected to the minimum router fields', () => {
+  const tables = validConfigWithRouterTables();
+  const result = evaluateConfigGateway({
+    envelope: { ...envelope, payload: { command: '/kiemke', intent: 'ROUTE_COMMAND', required_sheet_names: ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'] } },
+    tables,
+    now: FIXED_NOW,
+  });
+  const context = result.response.data.context_tables;
+  assert.ok(context.CONFIG_USER.every((row) => Object.keys(row).every((key) => ['user_id', 'branch_id', 'trang_thai'].includes(key))));
+  assert.ok(context.OPERATION.every((row) => Object.keys(row).every((key) => ['operation_id', 'request_id', 'operation_type', 'idempotency_key', 'status'].includes(key))));
+  assert.equal(Object.values(context).some((rows) => rows.some((row) => 'normalized_config_json' in row)), false);
+});

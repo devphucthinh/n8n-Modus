@@ -260,9 +260,17 @@ function requestedConfigTables(tables, requested) {
     .map((row) => ({ ...row }))]));
 }
 
-function contextConfigTables(tables, requested) {
-  if (requested.length === 0) return {};
-  return Object.fromEntries(['CONFIG_USER', 'CONFIG_BRANCH', 'CONFIG_THONG_BAO', 'ERROR_BIA', 'OPERATION', 'EVENT_LOG'].map((sheetName) => [sheetName, (tableRows(tables, sheetName) ?? []).map((row) => ({ ...row }))]));
+const CONTEXT_COLUMNS = Object.freeze({
+  CONFIG_USER: ['user_id', 'branch_id', 'trang_thai'],
+  CONFIG_THONG_BAO: ['message_key', 'message_text', 'locale', 'trang_thai'],
+  ERROR_BIA: ['error_id', 'error_code', 'retryable', 'operation_id', 'request_id', 'status'],
+  OPERATION: ['operation_id', 'request_id', 'operation_type', 'idempotency_key', 'status'],
+  EVENT_LOG: ['event_id', 'event_type', 'request_id', 'operation_id', 'command', 'outcome', 'error_code', 'trang_thai'],
+});
+
+function contextConfigTables(tables, requested, includeAudit = false) {
+  const entries = requested.length ? Object.entries(CONTEXT_COLUMNS) : includeAudit ? [['EVENT_LOG', CONTEXT_COLUMNS.EVENT_LOG]] : [];
+  return Object.fromEntries(entries.map(([sheetName, columns]) => [sheetName, (tableRows(tables, sheetName) ?? []).map((row) => Object.fromEntries(columns.map((column) => [column, row[column] ?? ''])))]));
 }
 
 function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables = {}, contextTables = {} }) {
@@ -295,11 +303,11 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   }
   const normalizedEnvelope = { ...envelope };
   const requested = requestedSheetNames(normalizedEnvelope);
-  const decorateFailure = (result) => {
+  const decorateFailure = (result, { includeAudit = false } = {}) => {
     if (!result?.ok) {
       result.response = { ...(result.response ?? {}), messages };
-      if (requested.length > 0 && !result.response.data) {
-        result.response.data = { config_tables: {}, context_tables: contextConfigTables(tables, requested) };
+      if ((requested.length > 0 || includeAudit) && !result.response.data) {
+        result.response.data = { config_tables: {}, context_tables: contextConfigTables(tables, requested, includeAudit) };
       }
     }
     return result;
@@ -318,7 +326,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   if (asText(envelope.event_type).toUpperCase() === 'TELEGRAM_UPDATE' && !isBlank(envelope.actor_user_id)) {
     const actor = (tableRows(tables, 'CONFIG_USER') ?? []).find((row) => asText(row.user_id) === asText(envelope.actor_user_id));
     if (!actor || asText(actor.trang_thai).toUpperCase() !== ACTIVE) {
-      return decorateFailure(makeFailure('USER_NOT_ACTIVE', 'User is not active', normalizedEnvelope));
+      return decorateFailure(makeFailure('USER_NOT_ACTIVE', 'User is not active', normalizedEnvelope), { includeAudit: true });
     }
   }
 

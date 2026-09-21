@@ -45,7 +45,7 @@ function routerHelpText(config, context) {
     lines.push(`  Quyền: ${routerText(row.permission_code) || 'Không yêu cầu'}`);
     lines.push(`  Ví dụ: ${routerText(row.example) || syntax}`);
   }
-  return lines.join('\n').slice(0, 4096);
+  return lines.join('\n');
 }
 
 function routerAuditPlan(normalized, context, errorCode, topic, now) {
@@ -110,10 +110,10 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
     : null;
   const command = routerText(callbackCommand || normalized?.command).toLowerCase();
   const base = { kind: 'DENY', write_plan: [] };
-  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: [] }, text: gatewayResult?.ok ? routerStatusText(gatewayResult, context) : routerErrorText(gatewayResult, context, response.error_code, response.error_id) };
   if (!gatewayResult?.ok) return { decision: { kind: 'DENY', write_plan: response.error_code === 'USER_NOT_ACTIVE' ? routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', null, now) : [] }, text: routerErrorText(gatewayResult, context, response.error_code, response.error_id) };
+  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: [] }, text: routerStatusText(gatewayResult, context) };
   const operationKeys = [normalized?.envelope?.operation_id, normalized?.envelope?.request_id, normalized?.envelope?.payload?.idempotency_key].map(routerText).filter(Boolean);
-  if ((context.OPERATION ?? []).some((row) => routerText(row.status).toUpperCase() === 'COMMITTED' && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).some((value) => operationKeys.includes(value)))) {
+  if ((context.OPERATION ?? []).some((row) => ['COMMITTED', 'PREPARED'].includes(routerText(row.status).toUpperCase()) && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).some((value) => operationKeys.includes(value)))) {
     const messages = routerMessages(gatewayResult, context);
     return { decision: { kind: 'DUPLICATE', write_plan: [] }, text: routerText(messages.get('ROUTER_DUPLICATE') || 'Yêu cầu đã được xử lý.') };
   }
@@ -138,7 +138,7 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
   if (!commandRow) return { decision: base, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}`) };
   const topic = (config.CONFIG_TOPIC ?? []).find((row) => routerActive(row)
     && routerText(row.chat_id) === routerText(normalized?.reply_target?.chat_id)
-    && (routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id) || !routerText(row.message_thread_id))
+    && routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id)
     && (!routerText(commandRow.topic_type) || routerText(row.topic_type) === routerText(commandRow.topic_type)));
   if (!routerAuthorized({ actorUserId: normalized?.envelope?.actor_user_id, command, topic, config, context, now })) {
     return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${routerText(normalized?.envelope?.operation_id)}-user_not_authorized`) };
@@ -155,6 +155,23 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
         permission_code: routerText(commandRow.permission_code) || null,
         operation_id: routerText(normalized?.envelope?.operation_id),
         idempotency_key: routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id),
+      },
+      reservation: {
+        sheet: 'OPERATION',
+        action: 'APPEND',
+        row: {
+          operation_id: routerText(normalized?.envelope?.operation_id),
+          request_id: routerText(normalized?.envelope?.request_id),
+          operation_type: 'ROUTE_COMMAND',
+          idempotency_key: routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id),
+          expected_row_count: '1',
+          actual_row_count: '',
+          checksum: '',
+          status: 'PREPARED',
+          error_id: '',
+          created_at: now,
+          updated_at: now,
+        },
       },
       write_plan: [],
     },

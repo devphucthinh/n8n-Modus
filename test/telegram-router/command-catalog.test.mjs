@@ -42,3 +42,13 @@ test('help omits commands without an explicit ACTIVE status', () => {
   const result = formatHelp({ tables });
   assert.doesNotMatch(result.text, /\/blank/);
 });
+
+test('help keeps the full configured catalog before workflow message chunking', () => {
+  const tables = validConfigWithRouterTables();
+  for (let index = 0; index < 80; index += 1) {
+    tables.CONFIG_LENH.push({ command_code: `CMD_LONG_${index}`, command_text: `/long${index}`, syntax: `/long${index}`, description_vi: 'x'.repeat(80), permission_code: '', topic_type: '', worker_workflow: '', example: `/long${index}`, ordinal: String(100 + index), trang_thai: 'ACTIVE' });
+  }
+  const result = formatHelp({ tables });
+  assert.ok(result.text.length > 4096);
+  assert.match(result.text, /\/long79/);
+});

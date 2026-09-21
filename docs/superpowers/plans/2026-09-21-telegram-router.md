@@ -10,6 +10,8 @@
 
 **Spec:** `docs/specs/kiem-ke-bia-v2.md`, issue #3 at `https://github.com/devphucthinh/n8n-Modus/issues/3`, ADR 0005 and ADR 0021.
 
+**Implementation status:** The plan is implemented on `codex/issue-3-telegram-router` and tracked in PR #21. Local workflow build/validation and the complete test suite pass; live n8n/Telegram evidence remains a release gate and is recorded in `docs/testing/issue-3-evidence.md`.
+
 ## Global Constraints
 
 - WF03 is the only Telegram Trigger for the bot; workers receive the standard envelope.
@@ -19,6 +21,7 @@
 - `branch_id='*'` is the global role scope; inactive or unknown users are denied without revealing roles, branches, or configuration.
 - Repeated `update_id`, callback ID, or retry operation has one effective business effect. Message updates use `tg-<update_id>`; callback updates add a stable `payload.idempotency_key=tg-callback-<callback_id>` and reuse it across Telegram re-deliveries.
 - Workflow exports are inactive, contain no secrets, and use `GOOGLE_SHEETS_KKB_V2`/`TELEGRAM_KKB_V2` credential names.
+- Accepted routes reserve `OPERATION.idempotency_key` with a `PREPARED` row before Telegram ACK; Google Sheets uses `appendOrUpdate` matching `idempotency_key`, while access audit uses `event_id`.
 - Existing WF01/WF02/WF03 Issue #2 behavior and live `/trangthai` path must remain green.
 
 ---

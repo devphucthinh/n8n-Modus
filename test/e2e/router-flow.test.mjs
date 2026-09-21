@@ -9,6 +9,8 @@ test('routes each configured command by topic and returns the standard envelope'
   assert.equal(result.decision.kind, 'ROUTE');
   assert.equal(result.decision.route.topic_type, 'KIEM_KE');
   assert.equal(result.decision.route.worker_workflow, 'WF05_V2_MO_PHIEN_KIEM_KE');
+  assert.equal(result.decision.reservation.row.idempotency_key, 'tg-9001');
+  assert.equal(result.decision.reservation.row.status, 'PREPARED');
   assert.equal(result.envelope.operation_id, 'tg-9001');
 });
 
@@ -16,6 +18,15 @@ test('does not expose gateway ledger writes as a router audit plan for status', 
   const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/trangthai' }), tables: validConfigWithRouterTables(), now: FIXED_NOW });
   assert.equal(result.decision.kind, 'STATUS');
   assert.deepEqual(result.decision.write_plan, []);
+});
+
+test('denies inactive users even for /trangthai and records an access audit', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_USER[0].trang_thai = 'INACTIVE';
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/trangthai' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.write_plan[0].sheet, 'EVENT_LOG');
+  assert.match(result.reply.text, /Mã lỗi/);
 });
 
 test('unknown command is denied without a worker call or write plan', () => {
@@ -86,9 +97,35 @@ test('deduplicates a callback replay by callback id even when Telegram changes u
   });
   const first = runRouterFlow({ update: update(9010), tables, now: FIXED_NOW });
   assert.equal(first.decision.kind, 'ROUTE');
-  const operation = first.gateway.write_plan.find((entry) => entry.sheet === 'OPERATION')?.row;
+  const operation = first.decision.reservation.row;
   assert.equal(operation.idempotency_key, 'tg-callback-callback-replay');
   tables.OPERATION.push({ ...operation, status: 'COMMITTED', actual_row_count: '1', updated_at: FIXED_NOW });
   const repeated = runRouterFlow({ update: update(9011), tables, now: FIXED_NOW });
   assert.equal(repeated.decision.kind, 'DUPLICATE');
+});
+
+test('uses callback_query.from as the actor even when the callback message has a bot sender', () => {
+  const tables = validConfigWithRouterTables();
+  const result = runRouterFlow({
+    update: {
+      update_id: 9004,
+      callback_query: {
+        id: 'callback-actor',
+        from: { id: '10001' },
+        data: 'CMD_KIEM_KE',
+        message: { from: { id: '7709260866', is_bot: true }, chat: { id: '-100100' }, message_thread_id: '77' },
+      },
+    },
+    tables,
+    now: FIXED_NOW,
+  });
+  assert.equal(result.envelope.actor_user_id, '10001');
+  assert.equal(result.decision.kind, 'ROUTE');
+});
+
+test('does not route a command through a wildcard thread mapping', () => {
+  const tables = validConfigWithRouterTables();
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke', threadId: '999' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
 });

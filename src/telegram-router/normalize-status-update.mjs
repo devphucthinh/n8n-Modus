@@ -4,7 +4,7 @@ const text = (value) => (value == null ? '' : String(value));
 function sourceParts(update) {
   const callback = update?.callback_query;
   const message = update?.message ?? update?.edited_message ?? callback?.message;
-  const actor = message?.from ?? callback?.from;
+  const actor = callback?.from ?? message?.from;
   return { callback, message, actor };
 }
 

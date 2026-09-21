@@ -10,7 +10,7 @@ function reply(normalized, text) {
   return {
     chat_id: normalized.reply_target.chat_id,
     message_thread_id: normalized.reply_target.message_thread_id,
-    text: asText(text).slice(0, 4096),
+    text: asText(text),
   };
 }
 

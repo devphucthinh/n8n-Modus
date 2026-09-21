@@ -66,6 +66,14 @@ test('WF03 carries router table requests and keeps command policy Sheet-driven',
   assert.match(decision.parameters.jsCode, /CONFIG_LENH/);
   assert.doesNotMatch(JSON.stringify(router), /WF05_V2_MO_PHIEN_KIEM_KE|KIEM_KE_WRITE/);
   assert.ok(router.nodes.some((node) => node.name === 'Append EVENT_LOG'));
+  assert.ok(router.nodes.some((node) => node.name === 'Append OPERATION reservation'));
+  assert.ok(router.nodes.some((node) => node.name === 'Split Router Reply'));
+  const reservation = router.nodes.find((node) => node.name === 'Append OPERATION reservation');
+  const audit = router.nodes.find((node) => node.name === 'Append EVENT_LOG');
+  assert.equal(reservation.parameters.operation, 'appendOrUpdate');
+  assert.deepEqual(reservation.parameters.columns.matchingColumns, ['idempotency_key']);
+  assert.equal(audit.parameters.operation, 'appendOrUpdate');
+  assert.deepEqual(audit.parameters.columns.matchingColumns, ['event_id']);
 });
 
 test('WF03 preserves the reply after audit writes and acknowledges callback queries', async () => {
@@ -73,9 +81,9 @@ test('WF03 preserves the reply after audit writes and acknowledges callback quer
   const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
   assert.ok(router.nodes.some((node) => node.name === 'Restore Router Reply'));
   assert.deepEqual(router.connections['Append EVENT_LOG'].main[0].map((target) => target.node), ['Restore Router Reply']);
-  assert.deepEqual(router.connections['Restore Router Reply'].main[0].map((target) => target.node), ['Send Telegram Reply']);
+  assert.deepEqual(router.connections['Restore Router Reply'].main[0].map((target) => target.node), ['Split Router Reply']);
   const callback = router.nodes.find((node) => node.name === 'Answer Telegram Callback');
   assert.equal(callback.parameters.resource, 'callback');
   assert.equal(callback.parameters.operation, 'answerQuery');
-  assert.deepEqual(router.connections['Callback query?'].main[0].map((target) => target.node), ['Answer Telegram Callback']);
+  assert.deepEqual(router.connections['Normalize Telegram Update'].main[0].map((target) => target.node), ['Status command?', 'Callback query?']);
 });
