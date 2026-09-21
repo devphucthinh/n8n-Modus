@@ -13,7 +13,7 @@ Bộ tài liệu này hợp nhất các workflow n8n, bản xuất Google Sheets
 - V2 là hệ thống độc lập; WF04 chỉ là nguồn tham khảo hành vi.
 - Hai file `.xlsx` là bản tải xuống từ Google Sheets đang còn hiệu lực. Chúng là ảnh chụp để phân tích, không phải nguồn cấu hình chính thức.
 - Dữ liệu lịch sử hiện tại là dữ liệu test và có thể chỉnh sửa trong giai đoạn chuẩn bị.
-- Chưa tạo workflow JSON V2 trong giai đoạn tài liệu hóa này.
+- Tracer bullet issue #2 đã có ba workflow JSON V2 bất hoạt, workbook core Sheet fixture và bộ test local; chưa import/smoke test trên n8n live.
 
 ## Thứ tự ưu tiên khi có mâu thuẫn
 
@@ -36,6 +36,7 @@ Nếu hai nguồn cùng mức ưu tiên vẫn mâu thuẫn, dừng thay đổi l
 | [04 — Thiết kế đích V2](./04-v2-target-design.md) | 12 workflow, hợp đồng chung, sheet đích và các diagram |
 | [05 — Runbook vận hành](./05-operations-runbook.md) | Cấu hình n8n/Google Sheets, xử lý lỗi, backup, triển khai và rollback |
 | [06 — Việc cần làm tiếp theo](./06-next-steps.md) | Lộ trình Ask Matt từ tài liệu này đến spec, ticket và triển khai |
+| [07 — Handoff issue #2](./07-issue-2-agent-handoff.md) | Tiến độ, kiểm thử, artifact và việc còn lại cho agent tiếp theo |
 | [Đặc tả V2](../specs/kiem-ke-bia-v2.md) | User stories, quyết định triển khai, kiểm thử và tiêu chí nghiệm thu |
 
 ## Quy tắc cập nhật bộ tài liệu
@@ -49,9 +50,7 @@ Nếu hai nguồn cùng mức ưu tiên vẫn mâu thuẫn, dừng thay đổi l
 
 ## Phạm vi ngoài tài liệu này
 
-- Các JSON V2 có thể import vào n8n.
-- Mẫu Google Sheets V2 hoàn chỉnh.
-- Bộ test và bằng chứng chạy thử.
+- Các worker V2 còn lại ngoài tracer bullet issue #2.
 - Kế hoạch cutover đã điền ID thật của môi trường sản xuất.
 
 Các đầu ra trên thuộc giai đoạn đặc tả và triển khai tiếp theo.

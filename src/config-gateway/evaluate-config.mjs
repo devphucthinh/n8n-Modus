@@ -1,0 +1,360 @@
+import { CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
+import { sha256 } from './sha256.mjs';
+
+const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO'];
+const SCHEMA_DATA_TYPES = new Set(['STRING', 'INTEGER', 'NUMBER', 'BOOLEAN', 'DATE', 'DATETIME']);
+const ACTIVE = 'ACTIVE';
+
+const asText = (value) => (value == null ? '' : String(value).trim());
+const isBlank = (value) => asText(value) === '';
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
+  }
+  return value;
+}
+
+function canonicalJson(value) {
+  return JSON.stringify(canonicalize(value));
+}
+
+function safeErrorId(operationId, errorCode) {
+  const operation = asText(operationId).replace(/[^A-Za-z0-9_-]/g, '_') || 'unknown';
+  return `err-${operation}-${errorCode}`;
+}
+
+function failure(errorCode, message, details = {}) {
+  return {
+    ok: false,
+    response: {
+      status: 'ERROR',
+      error_code: errorCode,
+      error_id: details.error_id,
+      message: message || errorCode,
+      ...details,
+    },
+    write_plan: [],
+    diagnostics: { error_code: errorCode },
+  };
+}
+
+function makeFailure(errorCode, message, envelope, details = {}) {
+  const requestId = asText(envelope?.request_id);
+  const operationId = asText(envelope?.operation_id);
+  return failure(errorCode, message, {
+    request_id: requestId,
+    operation_id: operationId,
+    retryable: false,
+    error_id: safeErrorId(operationId, errorCode),
+    ...details,
+  });
+}
+
+function tableRows(tables, sheetName) {
+  const rows = tables?.[sheetName];
+  return Array.isArray(rows) ? rows : null;
+}
+
+function validateCoreTables(tables, envelope) {
+  if (!tables || typeof tables !== 'object') return makeFailure('CONFIG_TABLES_MISSING', 'Configuration tables are missing', envelope);
+  for (const sheetName of CORE_SHEET_NAMES) {
+    const rows = tableRows(tables, sheetName);
+    if (rows === null) return makeFailure('CONFIG_SHEET_MISSING', `Missing configuration sheet ${sheetName}`, envelope, { sheet_name: sheetName });
+    if (rows.length === 0) continue;
+    const keys = new Set(Object.keys(rows[0] ?? {}));
+    for (const columnName of CORE_SHEET_DEFINITIONS[sheetName]) {
+      if (!keys.has(columnName)) {
+        return makeFailure('CONFIG_COLUMN_MISSING', `Missing ${sheetName}.${columnName}`, envelope, { sheet_name: sheetName, column_name: columnName });
+      }
+    }
+  }
+  return null;
+}
+
+function parseAllowedValues(value) {
+  const text = asText(value);
+  if (!text) return [];
+  if (text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text);
+      return Array.isArray(parsed) ? parsed.map(asText) : [];
+    } catch {
+      return text.split('|').map(asText).filter(Boolean);
+    }
+  }
+  return text.split('|').map(asText).filter(Boolean);
+}
+
+function readSchemaRules(tables, envelope) {
+  const schemaRows = tableRows(tables, 'CONFIG_SCHEMA') ?? [];
+  if (schemaRows.length === 0) return { error: makeFailure('CONFIG_SCHEMA_EMPTY', 'CONFIG_SCHEMA must declare every core column before writes', envelope) };
+  const rules = [];
+  for (const [index, row] of schemaRows.entries()) {
+    const sheetName = asText(row.sheet_name);
+    const columnName = asText(row.column_name);
+    const dataType = asText(row.data_type).toUpperCase();
+    if (!CORE_SHEET_NAMES.includes(sheetName) || !CORE_SHEET_DEFINITIONS[sheetName]?.includes(columnName)) {
+      return { error: makeFailure('CONFIG_SCHEMA_INVALID', `Invalid schema rule at row ${index + 2}`, envelope, { row_number: index + 2 }) };
+    }
+    if (!SCHEMA_DATA_TYPES.has(dataType)) {
+      return { error: makeFailure('CONFIG_SCHEMA_INVALID', `Unsupported data type for ${sheetName}.${columnName}`, envelope, { sheet_name: sheetName, column_name: columnName }) };
+    }
+    const referenceSheet = asText(row.reference_sheet);
+    const referenceColumn = asText(row.reference_column);
+    if ((referenceSheet && !referenceColumn) || (!referenceSheet && referenceColumn)) {
+      return { error: makeFailure('CONFIG_SCHEMA_INVALID', `Incomplete reference for ${sheetName}.${columnName}`, envelope) };
+    }
+    if (referenceSheet && (!CORE_SHEET_NAMES.includes(referenceSheet) || !CORE_SHEET_DEFINITIONS[referenceSheet].includes(referenceColumn))) {
+      return { error: makeFailure('CONFIG_SCHEMA_INVALID', `Invalid reference for ${sheetName}.${columnName}`, envelope) };
+    }
+    rules.push({
+      ...row,
+      sheet_name: sheetName,
+      column_name: columnName,
+      data_type: dataType,
+      required: ['YES', 'TRUE', '1'].includes(asText(row.required).toUpperCase()),
+      unique_group: asText(row.unique_group),
+      reference_sheet: referenceSheet,
+      reference_column: referenceColumn,
+      allowed_values: parseAllowedValues(row.allowed_values),
+      trang_thai: asText(row.trang_thai).toUpperCase() || ACTIVE,
+    });
+  }
+
+  const duplicateRule = rules.find((rule, index) => rules.findIndex((candidate) => candidate.sheet_name === rule.sheet_name && candidate.column_name === rule.column_name) !== index);
+  if (duplicateRule) {
+    return { error: makeFailure('CONFIG_SCHEMA_DUPLICATE', `Duplicate schema rule for ${duplicateRule.sheet_name}.${duplicateRule.column_name}`, envelope, { sheet_name: duplicateRule.sheet_name, column_name: duplicateRule.column_name }) };
+  }
+  const declared = new Set(rules.map((rule) => `${rule.sheet_name}.${rule.column_name}`));
+  for (const sheetName of CORE_SHEET_NAMES) {
+    for (const columnName of CORE_SHEET_DEFINITIONS[sheetName]) {
+      if (!declared.has(`${sheetName}.${columnName}`)) {
+        return { error: makeFailure('CONFIG_SCHEMA_INCOMPLETE', `Schema does not declare ${sheetName}.${columnName}`, envelope, { sheet_name: sheetName, column_name: columnName }) };
+      }
+    }
+  }
+  return { rules };
+}
+
+function typeValid(value, dataType) {
+  const text = asText(value);
+  if (!text) return true;
+  if (dataType === 'INTEGER') return /^-?\d+$/.test(text);
+  if (dataType === 'NUMBER') return /^-?(?:\d+|\d*\.\d+)$/.test(text);
+  if (dataType === 'BOOLEAN') return ['YES', 'NO', 'TRUE', 'FALSE', '1', '0'].includes(text.toUpperCase());
+  if (dataType === 'DATE') return /^\d{4}-\d{2}-\d{2}$/.test(text);
+  if (dataType === 'DATETIME') return !Number.isNaN(Date.parse(text));
+  return true;
+}
+
+function validateRows(tables, rules, envelope) {
+  for (const rule of rules) {
+    if (rule.trang_thai !== ACTIVE) continue;
+    const rows = tableRows(tables, rule.sheet_name) ?? [];
+    const seen = new Map();
+    for (const [index, row] of rows.entries()) {
+      const value = row?.[rule.column_name];
+      if (rule.required && isBlank(value)) {
+        return makeFailure('CONFIG_REQUIRED_VALUE_MISSING', `Missing value for ${rule.sheet_name}.${rule.column_name}`, envelope, { sheet_name: rule.sheet_name, column_name: rule.column_name, row_number: index + 2 });
+      }
+      if (!typeValid(value, rule.data_type)) {
+        return makeFailure('CONFIG_TYPE_INVALID', `Invalid ${rule.data_type} for ${rule.sheet_name}.${rule.column_name}`, envelope, { sheet_name: rule.sheet_name, column_name: rule.column_name, row_number: index + 2 });
+      }
+      if (!isBlank(value) && rule.allowed_values.length > 0 && !rule.allowed_values.includes(asText(value))) {
+        return makeFailure('CONFIG_ALLOWED_VALUE_INVALID', `Invalid value for ${rule.sheet_name}.${rule.column_name}`, envelope, { sheet_name: rule.sheet_name, column_name: rule.column_name, row_number: index + 2 });
+      }
+      if (rule.unique_group && !isBlank(value)) {
+        const key = asText(value);
+        if (seen.has(key)) {
+          return makeFailure('CONFIG_DUPLICATE_KEY', `Duplicate ${rule.sheet_name}.${rule.column_name}`, envelope, { sheet_name: rule.sheet_name, column_name: rule.column_name, first_row_number: seen.get(key) + 2, row_number: index + 2 });
+        }
+        seen.set(key, index);
+      }
+    }
+    if (rule.reference_sheet && rule.reference_column) {
+      const referenced = new Set((tableRows(tables, rule.reference_sheet) ?? []).map((row) => asText(row?.[rule.reference_column])).filter(Boolean));
+      for (const [index, row] of rows.entries()) {
+        const value = asText(row?.[rule.column_name]);
+        if (value && !referenced.has(value)) {
+          return makeFailure('CONFIG_REFERENCE_INVALID', `Invalid reference for ${rule.sheet_name}.${rule.column_name}`, envelope, { sheet_name: rule.sheet_name, column_name: rule.column_name, row_number: index + 2 });
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeConfigTables(tables) {
+  return Object.fromEntries(FINGERPRINT_SHEETS.map((sheetName) => {
+    const rows = (tableRows(tables, sheetName) ?? []).map((row) => Object.fromEntries(
+      Object.entries(row ?? {}).map(([key, value]) => [key, value == null ? '' : String(value).trim()]),
+    ));
+    rows.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+    return [sheetName, rows];
+  }));
+}
+
+function activeVersionRow(tables) {
+  return (tableRows(tables, 'CONFIG_VERSION') ?? []).find((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE') ?? null;
+}
+
+function versionNumber(version) {
+  const match = /(?:^|\D)(\d+)(?:\.\d+)?$/.exec(asText(version));
+  return match ? Number(match[1]) : null;
+}
+
+function isVersionGreater(current, previous) {
+  const currentNumber = versionNumber(current);
+  const previousNumber = versionNumber(previous);
+  if (currentNumber !== null && previousNumber !== null) return currentNumber > previousNumber;
+  return asText(current) > asText(previous);
+}
+
+function committedPredecessor(tables) {
+  const committedOperations = new Set((tableRows(tables, 'OPERATION') ?? [])
+    .filter((row) => asText(row.status).toUpperCase() === 'COMMITTED')
+    .map((row) => asText(row.operation_id))
+    .filter(Boolean));
+  return (tableRows(tables, 'CONFIG_SNAPSHOT') ?? [])
+    .filter((row) => asText(row.status).toUpperCase() === 'COMMITTED' && committedOperations.has(asText(row.operation_id)))
+    .sort((left, right) => asText(left.created_at).localeCompare(asText(right.created_at)))
+    .at(-1) ?? null;
+}
+
+function configuredMessages(tables) {
+  return Object.fromEntries((tableRows(tables, 'CONFIG_THONG_BAO') ?? [])
+    .filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE' && !isBlank(row.message_key))
+    .map((row) => [asText(row.message_key), asText(row.message_text)]));
+}
+
+function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages }) {
+  const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
+  return {
+    status: 'OK',
+    request_id: asText(envelope.request_id),
+    operation_id: asText(envelope.operation_id),
+    gateway_health: 'OK',
+    state: maintenanceMode === 'YES' ? 'MAINTENANCE' : 'ACTIVE',
+    config_version: configVersion,
+    schema_version: schemaVersion,
+    config_snapshot_id: snapshotId,
+    fingerprint,
+    maintenance_mode: maintenanceMode,
+    active_branch_count: activeBranches.length,
+    active_branches: activeBranches,
+    messages,
+    data: {},
+    warnings: [],
+  };
+}
+
+export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().toISOString() } = {}) {
+  const messages = configuredMessages(tables);
+  if (!envelope || !envelope.request_id || !envelope.operation_id) {
+    const result = makeFailure('ENVELOPE_INVALID', 'request_id and operation_id are required', envelope ?? {});
+    result.response.messages = messages;
+    return result;
+  }
+  const normalizedEnvelope = { ...envelope };
+  const decorateFailure = (result) => {
+    if (!result?.ok) result.response = { ...(result.response ?? {}), messages };
+    return result;
+  };
+  const tableError = validateCoreTables(tables, normalizedEnvelope);
+  if (tableError) return decorateFailure(tableError);
+
+  const schemaResult = readSchemaRules(tables, normalizedEnvelope);
+  if (schemaResult.error) return decorateFailure(schemaResult.error);
+  const rowError = validateRows(tables, schemaResult.rules, normalizedEnvelope);
+  if (rowError) return decorateFailure(rowError);
+
+  if (asText(envelope.event_type).toUpperCase() === 'TELEGRAM_UPDATE' && !isBlank(envelope.actor_user_id)) {
+    const actor = (tableRows(tables, 'CONFIG_USER') ?? []).find((row) => asText(row.user_id) === asText(envelope.actor_user_id));
+    if (!actor || asText(actor.trang_thai).toUpperCase() !== ACTIVE) {
+      return decorateFailure(makeFailure('USER_NOT_ACTIVE', 'User is not active', normalizedEnvelope));
+    }
+  }
+
+  const versionRow = activeVersionRow(tables);
+  if (!versionRow || isBlank(versionRow.config_version)) return decorateFailure(makeFailure('CONFIG_VERSION_MISSING', 'Active CONFIG_VERSION row is missing', normalizedEnvelope));
+  const configVersion = asText(versionRow.config_version);
+  const schemaVersion = asText(versionRow.schema_version);
+  const normalizedConfig = normalizeConfigTables(tables);
+  const normalizedConfigJson = canonicalJson(normalizedConfig);
+  const fingerprint = sha256(normalizedConfigJson);
+  const predecessor = committedPredecessor(tables);
+  const operationType = asText(envelope.payload?.intent || envelope.operation_type || (asText(envelope.payload?.command).toLowerCase().startsWith('/trangthai') ? 'READ_STATUS' : 'START_OPERATION')).toUpperCase();
+  const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
+
+  if (maintenanceMode === 'YES' && !['READ_STATUS', 'COMMAND_NOT_AVAILABLE'].includes(operationType)) {
+    return decorateFailure(makeFailure('CONFIG_MAINTENANCE', 'Configuration is in maintenance mode', normalizedEnvelope, { maintenance_mode: maintenanceMode }));
+  }
+  const activeBranches = (tableRows(tables, 'CONFIG_BRANCH') ?? [])
+    .filter((row) => asText(row.trang_thai).toUpperCase() === ACTIVE)
+    .map((row) => ({ branch_id: asText(row.branch_id), branch_name: asText(row.branch_name) }));
+  if (operationType === 'COMMAND_NOT_AVAILABLE') {
+    return {
+      ok: true,
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages }),
+      write_plan: [],
+      diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
+    };
+  }
+  if (predecessor) {
+    const sameVersion = configVersion === asText(predecessor.config_version);
+    const sameFingerprint = fingerprint === asText(predecessor.fingerprint);
+    if (sameVersion && !sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'Configuration content changed without incrementing config_version', normalizedEnvelope));
+    if (!sameVersion && sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_EMPTY_CHANGE', 'config_version changed without configuration content changing', normalizedEnvelope));
+    if (!sameVersion && !isVersionGreater(configVersion, predecessor.config_version)) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'config_version must increase', normalizedEnvelope));
+    if (sameVersion && sameFingerprint) {
+      return {
+        ok: true,
+        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages }),
+        write_plan: [],
+        diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: true },
+      };
+    }
+  }
+
+  const snapshotId = `cfg-${configVersion.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint.slice(0, 16)}`;
+  const operationId = asText(envelope.operation_id) || `op-${snapshotId}`;
+  const requestId = asText(envelope.request_id);
+  const operationRow = {
+    operation_id: operationId,
+    request_id: requestId,
+    operation_type: operationType,
+    idempotency_key: requestId || operationId,
+    expected_row_count: '1',
+    actual_row_count: '',
+    checksum: fingerprint,
+    status: 'PREPARED',
+    error_id: '',
+    created_at: now,
+    updated_at: now,
+  };
+  const snapshotRow = {
+    config_snapshot_id: snapshotId,
+    config_version: configVersion,
+    schema_version: schemaVersion,
+    fingerprint,
+    normalized_config_json: normalizedConfigJson,
+    operation_id: operationId,
+    status: 'PREPARED',
+    created_at: now,
+  };
+  return {
+    ok: true,
+    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages }),
+    write_plan: [
+      { sheet: 'OPERATION', action: 'APPEND', row: operationRow },
+      { sheet: 'CONFIG_SNAPSHOT', action: 'APPEND', row: snapshotRow },
+      { sheet: 'CONFIG_SNAPSHOT', action: 'UPDATE', match: { config_snapshot_id: snapshotId }, patch: { status: 'COMMITTED' } },
+      { sheet: 'OPERATION', action: 'UPDATE', match: { operation_id: operationId }, patch: { status: 'COMMITTED', actual_row_count: '1', updated_at: now } },
+    ],
+    diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: false },
+  };
+}
+
+export { canonicalJson };
