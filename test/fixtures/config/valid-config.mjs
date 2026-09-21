@@ -88,7 +88,7 @@ export function validConfig() {
     ),
     CONFIG_USER: rowsFrom(
       ['user_id', 'display_name', 'branch_id', 'trang_thai'],
-      [['10001', 'Người kiểm thử', 'CN_HN', 'ACTIVE']],
+      [['10001', 'Người kiểm thử', 'CN_HN', 'ACTIVE'], ['admin-1', 'Quản trị kiểm thử', 'CN_HN', 'ACTIVE']],
     ),
     CONFIG_THONG_BAO: rowsFrom(
       ['message_key', 'message_text', 'locale', 'trang_thai'],
