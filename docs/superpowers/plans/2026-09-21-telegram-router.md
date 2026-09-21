@@ -352,4 +352,3 @@ Verify `/help` renders all active `CONFIG_LENH` rows, an unknown/inactive user r
 - [ ] **Step 6: Close issue #3 only after evidence**
 
 Add the evidence comment to the PR/issue, confirm CI/review status, then merge only the focused PR. Issue #4 Dispatcher is the next separate implementation after #3 is merged and live smoke-tested.
-
