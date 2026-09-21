@@ -21,3 +21,21 @@ test('gateway keeps status-only calls compatible when router sheets are absent',
   assert.equal(result.ok, true);
   assert.deepEqual(result.response.data.config_tables, {});
 });
+
+test('gateway keeps audit context on inactive-user failures', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_USER = tables.CONFIG_USER.map((row) => ({ ...row, trang_thai: 'INACTIVE' }));
+  const result = evaluateConfigGateway({
+    envelope: {
+      ...envelope,
+      actor_user_id: '10001',
+      event_type: 'TELEGRAM_UPDATE',
+      payload: { command: '/kiemke', intent: 'START_OPERATION', required_sheet_names: ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'] },
+    },
+    tables,
+    now: FIXED_NOW,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'USER_NOT_ACTIVE');
+  assert.ok(result.response.data.context_tables.EVENT_LOG);
+});

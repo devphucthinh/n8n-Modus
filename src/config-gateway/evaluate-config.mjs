@@ -294,14 +294,19 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     return result;
   }
   const normalizedEnvelope = { ...envelope };
+  const requested = requestedSheetNames(normalizedEnvelope);
   const decorateFailure = (result) => {
-    if (!result?.ok) result.response = { ...(result.response ?? {}), messages };
+    if (!result?.ok) {
+      result.response = { ...(result.response ?? {}), messages };
+      if (requested.length > 0 && !result.response.data) {
+        result.response.data = { config_tables: {}, context_tables: contextConfigTables(tables, requested) };
+      }
+    }
     return result;
   };
   const tableError = validateCoreTables(tables, normalizedEnvelope);
   if (tableError) return decorateFailure(tableError);
 
-  const requested = requestedSheetNames(normalizedEnvelope);
   const requestedError = validateRequestedTables(tables, normalizedEnvelope, requested);
   if (requestedError) return decorateFailure(requestedError);
 
