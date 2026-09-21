@@ -1,0 +1,184 @@
+{
+  "name": "WF04_V2_DISPATCHER",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "kkb-v2-schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Schedule Trigger').first()?.json ?? {};\nconst tickAt = input.tick_at ?? input.timestamp ?? new Date().toISOString();\nconst tick = new Date(tickAt);\ntick.setUTCSeconds(0, 0);\ntick.setUTCMinutes(Math.floor(tick.getUTCMinutes() / 10) * 10);\nconst tickKey = tick.toISOString();\nreturn [{ json: { envelope: {\n  request_id: 'req-dispatch-' + tickKey,\n  operation_id: 'op-dispatch-tick-' + tickKey.replace(/[^0-9A-Z]/gi, ''),\n  event_type: 'SCHEDULED_JOB',\n  actor_user_id: 'SYSTEM',\n  branch_id: null,\n  business_date: null,\n  config_version: null,\n  payload: { intent: 'READ_STATUS', tick_at: tickAt }\n} } }];"
+      },
+      "id": "kkb-v2-create-dispatcher-envelope",
+      "name": "Create Dispatcher Envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "PASTE_WF01_WORKFLOW_ID",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-call-config-gateway",
+      "name": "Call Config Gateway",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        0
+      ],
+      "notes": "V2 technical placeholder; select WF01_V2_CONFIG_GATEWAY after import. The gateway must expose the normalized dispatcher tables in its response snapshot."
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "PASTE_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "DISPATCH_HISTORY",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-dispatch-history",
+      "name": "Read DISPATCH_HISTORY",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        820,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "notes": "Operational history read; corrections are append-only and must not edit committed rows directly."
+    },
+    {
+      "parameters": {
+        "jsCode": "const K = new Uint32Array([\n  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,\n  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,\n  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,\n  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,\n  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,\n  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,\n  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,\n  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,\n]);\n\nconst rotr = (value, bits) => (value >>> bits) | (value << (32 - bits));\n\n/** Dependency-free SHA-256 for Node tests and n8n Code nodes. */\nfunction sha256(input) {\n  const bytes = new TextEncoder().encode(String(input));\n  const bitLength = bytes.length * 8;\n  const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;\n  const padded = new Uint8Array(paddedLength);\n  padded.set(bytes);\n  padded[bytes.length] = 0x80;\n  const view = new DataView(padded.buffer);\n  view.setUint32(paddedLength - 8, Math.floor(bitLength / 0x100000000));\n  view.setUint32(paddedLength - 4, bitLength >>> 0);\n\n  let h0 = 0x6a09e667;\n  let h1 = 0xbb67ae85;\n  let h2 = 0x3c6ef372;\n  let h3 = 0xa54ff53a;\n  let h4 = 0x510e527f;\n  let h5 = 0x9b05688c;\n  let h6 = 0x1f83d9ab;\n  let h7 = 0x5be0cd19;\n\n  const schedule = new Uint32Array(64);\n  for (let offset = 0; offset < paddedLength; offset += 64) {\n    for (let i = 0; i < 16; i += 1) schedule[i] = view.getUint32(offset + i * 4);\n    for (let i = 16; i < 64; i += 1) {\n      const s0 = rotr(schedule[i - 15], 7) ^ rotr(schedule[i - 15], 18) ^ (schedule[i - 15] >>> 3);\n      const s1 = rotr(schedule[i - 2], 17) ^ rotr(schedule[i - 2], 19) ^ (schedule[i - 2] >>> 10);\n      schedule[i] = (schedule[i - 16] + s0 + schedule[i - 7] + s1) >>> 0;\n    }\n\n    let a = h0;\n    let b = h1;\n    let c = h2;\n    let d = h3;\n    let e = h4;\n    let f = h5;\n    let g = h6;\n    let h = h7;\n    for (let i = 0; i < 64; i += 1) {\n      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);\n      const choice = (e & f) ^ (~e & g);\n      const temp1 = (h + S1 + choice + K[i] + schedule[i]) >>> 0;\n      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);\n      const majority = (a & b) ^ (a & c) ^ (b & c);\n      const temp2 = (S0 + majority) >>> 0;\n      h = g;\n      g = f;\n      f = e;\n      e = (d + temp1) >>> 0;\n      d = c;\n      c = b;\n      b = a;\n      a = (temp1 + temp2) >>> 0;\n    }\n    h0 = (h0 + a) >>> 0;\n    h1 = (h1 + b) >>> 0;\n    h2 = (h2 + c) >>> 0;\n    h3 = (h3 + d) >>> 0;\n    h4 = (h4 + e) >>> 0;\n    h5 = (h5 + f) >>> 0;\n    h6 = (h6 + g) >>> 0;\n    h7 = (h7 + h) >>> 0;\n  }\n\n  return [h0, h1, h2, h3, h4, h5, h6, h7]\n    .map((value) => value.toString(16).padStart(8, '0'))\n    .join('');\n}\n\nconst ACTIVE_VALUES = new Set(['ACTIVE', 'ENABLED', 'YES', 'TRUE', '1']);\nconst INACTIVE_VALUES = new Set(['INACTIVE', 'DISABLED', 'NO', 'FALSE', '0']);\nconst DAY_NAMES = new Map([\n  ['MON', 1],\n  ['MONDAY', 1],\n  ['TUE', 2],\n  ['TUESDAY', 2],\n  ['WED', 3],\n  ['WEDNESDAY', 3],\n  ['THU', 4],\n  ['THURSDAY', 4],\n  ['FRI', 5],\n  ['FRIDAY', 5],\n  ['SAT', 6],\n  ['SATURDAY', 6],\n  ['SUN', 7],\n  ['SUNDAY', 7],\n]);\n\nconst scheduleText = (value) => (value == null ? '' : String(value).trim());\n\nfunction field(row, names) {\n  for (const name of names) {\n    if (row?.[name] !== undefined && row?.[name] !== null && scheduleText(row[name]) !== '') return row[name];\n  }\n  return '';\n}\n\nfunction required(row, names, label) {\n  const value = scheduleText(field(row, names));\n  if (!value) throw new Error(`DISPATCH_CONFIG_REQUIRED:${label}`);\n  return value;\n}\n\nfunction parseStatus(value, label) {\n  const normalized = scheduleText(value).toUpperCase();\n  if (!normalized) throw new Error(`DISPATCH_CONFIG_REQUIRED:${label}`);\n  if (ACTIVE_VALUES.has(normalized)) return true;\n  if (INACTIVE_VALUES.has(normalized)) return false;\n  throw new Error(`DISPATCH_CONFIG_STATUS_INVALID:${label}`);\n}\n\nfunction parseInteger(value, label, { minimum = 0 } = {}) {\n  const normalized = scheduleText(value);\n  if (!/^-?\\d+$/.test(normalized)) throw new Error(`DISPATCH_CONFIG_INTEGER_INVALID:${label}`);\n  const parsed = Number(normalized);\n  if (!Number.isSafeInteger(parsed) || parsed < minimum) throw new Error(`DISPATCH_CONFIG_INTEGER_INVALID:${label}`);\n  return parsed;\n}\n\nfunction parseTime(value) {\n  const normalized = scheduleText(value);\n  const match = /^(?<hour>[01]\\d|2[0-3]):(?<minute>[0-5]\\d)$/.exec(normalized);\n  if (!match) throw new Error('DISPATCH_CONFIG_TIME_INVALID:local_time');\n  return {\n    local_time: normalized,\n    hour: Number(match.groups.hour),\n    minute: Number(match.groups.minute),\n  };\n}\n\nfunction parseDays(value) {\n  const normalized = scheduleText(value).toUpperCase();\n  if (!normalized || normalized === '*') return [1, 2, 3, 4, 5, 6, 7];\n  const values = normalized.split(/[\\s,|]+/).filter(Boolean).flatMap((token) => {\n    if (/^[1-7]$/.test(token)) return [Number(token)];\n    const day = DAY_NAMES.get(token);\n    if (day) return [day];\n    const vietnameseDay = /^T([2-7])$/.exec(token);\n    return vietnameseDay ? [Number(vietnameseDay[1]) - 1] : [];\n  });\n  const unique = [...new Set(values)].sort((left, right) => left - right);\n  if (unique.length === 0 || unique.length !== normalized.split(/[\\s,|]+/).filter(Boolean).length) {\n    throw new Error('DISPATCH_CONFIG_DAYS_INVALID:days_of_week');\n  }\n  return unique;\n}\n\nfunction validateTimezone(timezone) {\n  try {\n    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date(0));\n  } catch {\n    throw new Error(`DISPATCH_CONFIG_TIMEZONE_INVALID:${timezone}`);\n  }\n  return timezone;\n}\n\nfunction activeBranch(branchRows, branchId) {\n  if (!Array.isArray(branchRows) || branchRows.length === 0) return null;\n  const row = branchRows.find((candidate) => scheduleText(candidate?.branch_id) === branchId);\n  if (!row) throw new Error(`DISPATCH_BRANCH_NOT_FOUND:${branchId}`);\n  return row;\n}\n\nfunction parseScheduleRow(row, { branchRows = [], defaultTimezone = '' } = {}) {\n  if (!row || typeof row !== 'object') throw new TypeError('DISPATCH_CONFIG_ROW_INVALID');\n\n  const scheduleId = required(row, ['schedule_id', 'lich_id', 'schedule_code'], 'schedule_id');\n  const jobCode = required(row, ['job_code', 'job_id', 'task_code'], 'job_code');\n  const workerWorkflow = required(row, ['worker_workflow', 'workflow_name', 'target_workflow'], 'worker_workflow');\n  const branchId = required(row, ['branch_id', 'branch_code'], 'branch_id');\n  const branch = activeBranch(branchRows, branchId);\n  const statusValue = field(row, ['trang_thai', 'status', 'enabled']);\n  const scheduleEnabled = parseStatus(statusValue, 'trang_thai');\n  const branchEnabled = branch ? parseStatus(field(branch, ['trang_thai', 'status']), 'CONFIG_BRANCH.trang_thai') : true;\n  const timezone = validateTimezone(required({ timezone: field(row, ['timezone', 'time_zone']) || field(branch, ['timezone']) || defaultTimezone }, ['timezone'], 'timezone'));\n  const parsedTime = parseTime(required(row, ['local_time', 'run_time', 'gio_chay'], 'local_time'));\n  const days = parseDays(field(row, ['days_of_week', 'weekday', 'thu_trong_tuan']));\n  const graceMinutes = parseInteger(field(row, ['grace_minutes', 'grace_window_minutes', 'phut_catchup']), 'grace_minutes');\n  const maxAttempts = parseInteger(field(row, ['max_attempts', 'retry_limit', 'max_retries']), 'max_attempts', { minimum: 1 });\n\n  return Object.freeze({\n    schedule_id: scheduleId,\n    job_code: jobCode,\n    worker_workflow: workerWorkflow,\n    branch_id: branchId,\n    timezone,\n    days_of_week: Object.freeze(days),\n    local_time: parsedTime.local_time,\n    hour: parsedTime.hour,\n    minute: parsedTime.minute,\n    grace_minutes: graceMinutes,\n    max_attempts: maxAttempts,\n    schedule_enabled: scheduleEnabled,\n    branch_enabled: branchEnabled,\n    enabled: scheduleEnabled && branchEnabled,\n    trang_thai: scheduleEnabled ? 'ACTIVE' : 'INACTIVE',\n  });\n}\n\nfunction parseScheduleRows({ rows = [], branchRows = [], defaultTimezone = '' } = {}) {\n  if (!Array.isArray(rows)) throw new TypeError('DISPATCH_CONFIG_ROWS_INVALID');\n  return rows.map((row) => parseScheduleRow(row, { branchRows, defaultTimezone }));\n}\n\n\nconst heartbeatText = (value) => (value == null ? '' : String(value).trim());\nconst FAILED_STATUSES = new Set(['FAILED', 'ERROR']);\n\nfunction parseHeartbeatInstant(value) {\n  const date = new Date(value);\n  if (Number.isNaN(date.getTime())) throw new Error('DISPATCH_TIME_INVALID:tickAt');\n  return date;\n}\n\nfunction heartbeatIdentity(tickAt) {\n  const date = parseHeartbeatInstant(tickAt);\n  date.setUTCSeconds(0, 0);\n  date.setUTCMinutes(Math.floor(date.getUTCMinutes() / 10) * 10);\n  const tickKey = date.toISOString();\n  const heartbeatKey = `heartbeat:${tickKey}`;\n  return {\n    tick_key: tickKey,\n    dispatch_key: heartbeatKey,\n    operation_id: `op-heartbeat-${sha256(heartbeatKey).slice(0, 32)}`,\n  };\n}\n\nfunction orderedHeartbeatRows(rows) {\n  return [...(Array.isArray(rows) ? rows : [])]\n    .filter((row) => heartbeatText(row?.record_type).toUpperCase() === 'HEARTBEAT' || heartbeatText(row?.dispatch_key).startsWith('heartbeat:'))\n    .sort((left, right) => heartbeatText(left.updated_at || left.created_at).localeCompare(heartbeatText(right.updated_at || right.created_at)));\n}\n\nfunction trailingFailures(rows) {\n  let failures = 0;\n  for (const row of [...rows].reverse()) {\n    if (!FAILED_STATUSES.has(heartbeatText(row.status).toUpperCase())) break;\n    failures += 1;\n  }\n  return failures;\n}\n\nfunction historyId(identity) {\n  return `dispatch-history-${sha256(`${identity.dispatch_key}|heartbeat`).slice(0, 24)}`;\n}\n\nfunction decideHeartbeat({ heartbeatRows = [], tickAt, success, failureThreshold } = {}) {\n  const threshold = Number(failureThreshold);\n  if (!Number.isSafeInteger(threshold) || threshold < 1) throw new Error('DISPATCH_HEARTBEAT_THRESHOLD_INVALID');\n  if (typeof success !== 'boolean') throw new TypeError('DISPATCH_HEARTBEAT_RESULT_REQUIRED');\n\n  const identity = heartbeatIdentity(tickAt);\n  const rows = orderedHeartbeatRows(heartbeatRows);\n  const duplicate = rows.find((row) => heartbeatText(row.dispatch_key) === identity.dispatch_key);\n  if (duplicate) {\n    return {\n      action: 'SKIP',\n      reason: 'HEARTBEAT_ALREADY_RECORDED',\n      ...identity,\n      status: heartbeatText(duplicate.status).toUpperCase(),\n      consecutive_failures: Number(heartbeatText(duplicate.failure_count)) || 0,\n      critical_alert: false,\n      recovery_alert: false,\n      alert_state: heartbeatText(duplicate.alert_state).toUpperCase() || 'HEALTHY',\n      history_row: duplicate,\n    };\n  }\n\n  const priorFailures = trailingFailures(rows);\n  const previous = rows.at(-1);\n  const previousWasCritical = heartbeatText(previous?.alert_state).toUpperCase() === 'CRITICAL' || priorFailures >= threshold;\n  const consecutiveFailures = success ? 0 : priorFailures + 1;\n  const criticalAlert = !success && consecutiveFailures >= threshold && priorFailures < threshold;\n  const recoveryAlert = success && previousWasCritical;\n  const alertState = success ? 'HEALTHY' : consecutiveFailures >= threshold ? 'CRITICAL' : 'DEGRADED';\n  const status = success ? 'SUCCEEDED' : 'FAILED';\n  const now = parseHeartbeatInstant(tickAt).toISOString();\n  const historyRow = {\n    history_id: historyId(identity),\n    record_type: 'HEARTBEAT',\n    dispatch_key: identity.dispatch_key,\n    operation_id: identity.operation_id,\n    schedule_id: '',\n    job_code: 'DISPATCH_HEARTBEAT',\n    worker_workflow: 'WF04_V2_DISPATCHER',\n    branch_id: '*',\n    occurrence_date: now.slice(0, 10),\n    scheduled_at_local: '',\n    status,\n    attempt_number: '1',\n    retryable: success ? '' : 'YES',\n    failure_count: String(consecutiveFailures),\n    error_code: success ? '' : 'DISPATCH_TICK_FAILED',\n    error_id: '',\n    heartbeat_failure_count: String(consecutiveFailures),\n    alert_state: alertState,\n    critical_alert: criticalAlert ? 'YES' : '',\n    recovery_alert: recoveryAlert ? 'YES' : '',\n    created_at: now,\n    updated_at: now,\n  };\n\n  return {\n    action: 'RECORD',\n    reason: success ? (recoveryAlert ? 'RECOVERY' : 'HEALTHY') : criticalAlert ? 'CRITICAL_THRESHOLD_REACHED' : 'FAILURE',\n    ...identity,\n    status,\n    consecutive_failures: consecutiveFailures,\n    critical_alert: criticalAlert,\n    recovery_alert: recoveryAlert,\n    alert_state: alertState,\n    history_row: historyRow,\n  };\n}\n\n\nconst WEEKDAY_NUMBERS = new Map([\n  ['Mon', 1],\n  ['Tue', 2],\n  ['Wed', 3],\n  ['Thu', 4],\n  ['Fri', 5],\n  ['Sat', 6],\n  ['Sun', 7],\n]);\n\nconst COMPLETED_STATUSES = new Set(['SUCCESS', 'SUCCEEDED', 'COMMITTED', 'COMPLETED', 'DONE']);\nconst IN_FLIGHT_STATUSES = new Set(['CLAIMED', 'RUNNING', 'DISPATCHED', 'PREPARED']);\nconst FAILURE_STATUSES = new Set(['FAILED', 'RETRYING']);\nconst WARNING_STATUSES = new Set(['WARNING', 'WARNED']);\n\nconst dispatchText = (value) => (value == null ? '' : String(value).trim());\n\nfunction parseDispatchInstant(value, label) {\n  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);\n  if (Number.isNaN(date.getTime())) throw new Error(`DISPATCH_TIME_INVALID:${label}`);\n  return date;\n}\n\nfunction pad(value) {\n  return String(value).padStart(2, '0');\n}\n\nfunction localParts(date, timezone) {\n  const formatter = new Intl.DateTimeFormat('en-US', {\n    timeZone: timezone,\n    weekday: 'short',\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    hour: '2-digit',\n    minute: '2-digit',\n    hourCycle: 'h23',\n  });\n  const parts = Object.fromEntries(formatter.formatToParts(date)\n    .filter((part) => part.type !== 'literal')\n    .map((part) => [part.type, part.value]));\n  const weekday = WEEKDAY_NUMBERS.get(parts.weekday);\n  if (!weekday) throw new Error(`DISPATCH_TIMEZONE_WEEKDAY_INVALID:${timezone}`);\n  return {\n    year: Number(parts.year),\n    month: Number(parts.month),\n    day: Number(parts.day),\n    hour: Number(parts.hour),\n    minute: Number(parts.minute),\n    weekday,\n    local_date: `${parts.year}-${parts.month}-${parts.day}`,\n    local_time: `${parts.hour}:${parts.minute}`,\n  };\n}\n\nfunction datePartsFromWallDate(wallDate) {\n  const date = new Date(wallDate);\n  const dayOfWeek = date.getUTCDay() === 0 ? 7 : date.getUTCDay();\n  return {\n    year: date.getUTCFullYear(),\n    month: date.getUTCMonth() + 1,\n    day: date.getUTCDate(),\n    weekday: dayOfWeek,\n  };\n}\n\nfunction wallDateFor(local, dayOffset = 0) {\n  return Date.UTC(local.year, local.month - 1, local.day) - dayOffset * 24 * 60 * 60 * 1000;\n}\n\nfunction wallMinutes(year, month, day, hour, minute) {\n  return Date.UTC(year, month - 1, day, hour, minute) / 60000;\n}\n\nfunction occurrenceFor(local, schedule, dateParts, differenceMinutes) {\n  const localDate = `${dateParts.year}-${pad(dateParts.month)}-${pad(dateParts.day)}`;\n  const localTime = schedule.local_time;\n  return {\n    local_date: localDate,\n    local_time: localTime,\n    scheduled_at_local: `${localDate}T${localTime}:00`,\n    timezone: schedule.timezone,\n    weekday: dateParts.weekday,\n    lateness_minutes: Math.max(0, differenceMinutes),\n  };\n}\n\nfunction findOccurrence(local, schedule) {\n  const currentWallDate = wallDateFor(local);\n  const currentDayScheduled = schedule.days_of_week.includes(local.weekday);\n  if (currentDayScheduled) {\n    const difference = wallMinutes(local.year, local.month, local.day, local.hour, local.minute)\n      - wallMinutes(local.year, local.month, local.day, schedule.hour, schedule.minute);\n    if (difference < 0) {\n      return occurrenceFor(local, schedule, {\n        year: local.year,\n        month: local.month,\n        day: local.day,\n        weekday: local.weekday,\n      }, difference);\n    }\n  }\n\n  for (let offset = 0; offset <= 7; offset += 1) {\n    const candidateDate = currentWallDate - offset * 24 * 60 * 60 * 1000;\n    const dateParts = datePartsFromWallDate(candidateDate);\n    if (!schedule.days_of_week.includes(dateParts.weekday)) continue;\n    const scheduledWall = wallMinutes(dateParts.year, dateParts.month, dateParts.day, schedule.hour, schedule.minute);\n    const nowWall = wallMinutes(local.year, local.month, local.day, local.hour, local.minute);\n    const difference = nowWall - scheduledWall;\n    if (difference >= 0) return occurrenceFor(local, schedule, dateParts, difference);\n  }\n\n  for (let offset = 1; offset <= 7; offset += 1) {\n    const candidateDate = currentWallDate + offset * 24 * 60 * 60 * 1000;\n    const dateParts = datePartsFromWallDate(candidateDate);\n    if (schedule.days_of_week.includes(dateParts.weekday)) return occurrenceFor(local, schedule, dateParts, -1);\n  }\n\n  throw new Error(`DISPATCH_OCCURRENCE_NOT_FOUND:${schedule.schedule_id}`);\n}\n\nfunction evaluateSchedule({ schedule, now } = {}) {\n  if (!schedule || typeof schedule !== 'object') throw new TypeError('DISPATCH_SCHEDULE_REQUIRED');\n  if (!schedule.enabled) return { phase: 'DISABLED', occurrence: null, lateness_minutes: null };\n  const instant = parseDispatchInstant(now, 'now');\n  const local = localParts(instant, schedule.timezone);\n  const occurrence = findOccurrence(local, schedule);\n  const nowWall = wallMinutes(local.year, local.month, local.day, local.hour, local.minute);\n  const scheduledParts = occurrence.scheduled_at_local.slice(0, 16).split(/[T:-]/).map(Number);\n  const scheduledWall = wallMinutes(scheduledParts[0], scheduledParts[1], scheduledParts[2], scheduledParts[3], scheduledParts[4]);\n  const difference = nowWall - scheduledWall;\n  const phase = difference < 0\n    ? 'NOT_DUE'\n    : difference === 0\n      ? 'DUE'\n      : difference <= schedule.grace_minutes\n        ? 'CATCH_UP'\n        : 'OUTSIDE_WINDOW';\n  return {\n    phase,\n    occurrence: { ...occurrence, lateness_minutes: Math.max(0, difference) },\n    lateness_minutes: Math.max(0, difference),\n  };\n}\n\nfunction dispatchIdentity({ schedule, occurrence } = {}) {\n  if (!schedule?.schedule_id || !schedule?.branch_id || !occurrence?.local_date || !occurrence?.local_time) {\n    throw new Error('DISPATCH_IDENTITY_INPUT_INVALID');\n  }\n  const dispatch_key = `dispatch:${schedule.schedule_id}:${schedule.branch_id}:${occurrence.local_date}:${occurrence.local_time}`;\n  return {\n    dispatch_key,\n    operation_id: `op-dispatch-${sha256(dispatch_key).slice(0, 32)}`,\n  };\n}\n\nfunction parseAttempt(row) {\n  const parsed = Number(dispatchText(row?.attempt_number));\n  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;\n}\n\nfunction isYes(value) {\n  return ['YES', 'TRUE', '1', 'Y'].includes(dispatchText(value).toUpperCase());\n}\n\nfunction sortHistory(rows) {\n  return [...rows].sort((left, right) => {\n    const leftTime = dispatchText(left.updated_at || left.created_at);\n    const rightTime = dispatchText(right.updated_at || right.created_at);\n    return leftTime.localeCompare(rightTime) || parseAttempt(left) - parseAttempt(right);\n  });\n}\n\nfunction historyForKey(historyRows, dispatchKey) {\n  return sortHistory((Array.isArray(historyRows) ? historyRows : [])\n    .filter((row) => dispatchText(row?.dispatch_key) === dispatchKey && dispatchText(row?.record_type).toUpperCase() !== 'HEARTBEAT'));\n}\n\nfunction rowId(identity, status, attempt) {\n  return `dispatch-history-${sha256(`${identity.dispatch_key}|${status}|${attempt}`).slice(0, 24)}`;\n}\n\nfunction historyRow({ identity, schedule, occurrence, status, attempt, now, retryable = '', errorCode = '' }) {\n  return {\n    history_id: rowId(identity, status, attempt),\n    record_type: 'JOB',\n    dispatch_key: identity.dispatch_key,\n    operation_id: identity.operation_id,\n    schedule_id: schedule.schedule_id,\n    job_code: schedule.job_code,\n    worker_workflow: schedule.worker_workflow,\n    branch_id: schedule.branch_id,\n    occurrence_date: occurrence.local_date,\n    scheduled_at_local: occurrence.scheduled_at_local,\n    status,\n    attempt_number: String(attempt),\n    retryable,\n    failure_count: '',\n    error_code: errorCode,\n    error_id: '',\n    heartbeat_failure_count: '',\n    alert_state: '',\n    critical_alert: '',\n    recovery_alert: '',\n    created_at: now,\n    updated_at: now,\n  };\n}\n\nfunction workerEnvelope({ identity, schedule, occurrence, requestId, configVersion, attempt }) {\n  const request = dispatchText(requestId);\n  const version = dispatchText(configVersion);\n  if (!request) throw new Error('DISPATCH_REQUEST_ID_REQUIRED');\n  if (!version) throw new Error('DISPATCH_CONFIG_VERSION_REQUIRED');\n  return {\n    request_id: request,\n    operation_id: identity.operation_id,\n    event_type: 'SCHEDULED_JOB',\n    branch_id: schedule.branch_id,\n    actor_user_id: 'SYSTEM',\n    business_date: occurrence.local_date,\n    config_version: version,\n    payload: {\n      dispatch_key: identity.dispatch_key,\n      schedule_id: schedule.schedule_id,\n      job_code: schedule.job_code,\n      worker_workflow: schedule.worker_workflow,\n      timezone: schedule.timezone,\n      scheduled_at_local: occurrence.scheduled_at_local,\n      attempt_number: attempt,\n    },\n  };\n}\n\nfunction skipResult({ phase, reason, occurrence, identity }) {\n  return {\n    action: 'SKIP',\n    reason,\n    phase,\n    occurrence,\n    ...(identity ? identity : {}),\n  };\n}\n\nfunction decideDispatch({\n  schedule,\n  now,\n  historyRows = [],\n  requestId,\n  configVersion,\n} = {}) {\n  if (!schedule || typeof schedule !== 'object') throw new TypeError('DISPATCH_SCHEDULE_REQUIRED');\n  const nowInstant = parseDispatchInstant(now, 'now').toISOString();\n  if (!schedule.enabled) return { action: 'SKIP', reason: schedule.schedule_enabled ? 'BRANCH_INACTIVE' : 'DISABLED', phase: 'DISABLED' };\n\n  const evaluated = evaluateSchedule({ schedule, now: nowInstant });\n  const identity = dispatchIdentity({ schedule, occurrence: evaluated.occurrence });\n  if (evaluated.phase === 'NOT_DUE') return skipResult({ ...evaluated, identity, reason: 'NOT_DUE' });\n\n  const matchingHistory = historyForKey(historyRows, identity.dispatch_key);\n  if (matchingHistory.some((row) => COMPLETED_STATUSES.has(dispatchText(row.status).toUpperCase()))) {\n    return skipResult({ ...evaluated, identity, reason: 'ALREADY_COMPLETED' });\n  }\n  if (matchingHistory.some((row) => IN_FLIGHT_STATUSES.has(dispatchText(row.status).toUpperCase()))) {\n    return skipResult({ ...evaluated, identity, reason: 'ALREADY_IN_FLIGHT' });\n  }\n  if (evaluated.phase === 'OUTSIDE_WINDOW') {\n    if (matchingHistory.some((row) => WARNING_STATUSES.has(dispatchText(row.status).toUpperCase()))) {\n      return skipResult({ ...evaluated, identity, reason: 'WARNING_ALREADY_RECORDED' });\n    }\n    return {\n      action: 'WARN',\n      reason: 'OUTSIDE_WINDOW',\n      phase: evaluated.phase,\n      occurrence: evaluated.occurrence,\n      ...identity,\n      warning: {\n        code: 'DISPATCH_OUTSIDE_WINDOW',\n        message_safe: `Scheduled job ${schedule.job_code} is outside its grace window`,\n        lateness_minutes: evaluated.lateness_minutes,\n      },\n      history_row: historyRow({\n        identity,\n        schedule,\n        occurrence: evaluated.occurrence,\n        status: 'WARNING',\n        attempt: 0,\n        now: nowInstant,\n        errorCode: 'DISPATCH_OUTSIDE_WINDOW',\n      }),\n    };\n  }\n\n  const latestFailure = [...matchingHistory].reverse().find((row) => FAILURE_STATUSES.has(dispatchText(row.status).toUpperCase()));\n  const attempt = latestFailure ? parseAttempt(latestFailure) + 1 : 1;\n  if (latestFailure && !isYes(latestFailure.retryable)) {\n    return skipResult({ ...evaluated, identity, reason: 'FAILURE_NOT_RETRYABLE' });\n  }\n  if (latestFailure && attempt > schedule.max_attempts) {\n    return skipResult({ ...evaluated, identity, reason: 'RETRY_LIMIT_REACHED' });\n  }\n\n  const action = latestFailure ? 'RETRY' : 'DISPATCH';\n  const reason = latestFailure ? 'RETRY_FAILED' : evaluated.phase === 'CATCH_UP' ? 'GRACE_CATCH_UP' : 'DUE';\n  return {\n    action,\n    reason,\n    phase: evaluated.phase,\n    occurrence: evaluated.occurrence,\n    ...identity,\n    attempt_number: attempt,\n    envelope: workerEnvelope({ identity, schedule, occurrence: evaluated.occurrence, requestId, configVersion, attempt }),\n    history_row: historyRow({\n      identity,\n      schedule,\n      occurrence: evaluated.occurrence,\n      status: 'CLAIMED',\n      attempt,\n      now: nowInstant,\n      retryable: latestFailure ? 'YES' : '',\n    }),\n  };\n}\n\nfunction buildDispatchPlan({\n  scheduleRows = [],\n  branchRows = [],\n  historyRows = [],\n  heartbeatRows = [],\n  defaultTimezone = '',\n  now,\n  requestId,\n  configVersion,\n  heartbeatSuccess,\n  heartbeatFailureThreshold,\n} = {}) {\n  const schedules = parseScheduleRows({ rows: scheduleRows, branchRows, defaultTimezone });\n  const decisions = schedules.map((schedule) => decideDispatch({\n    schedule,\n    now,\n    historyRows,\n    requestId,\n    configVersion,\n  }));\n  const heartbeat = decideHeartbeat({\n    heartbeatRows,\n    tickAt: now,\n    success: heartbeatSuccess,\n    failureThreshold: heartbeatFailureThreshold,\n  });\n  const dispatches = decisions.filter((decision) => ['DISPATCH', 'RETRY'].includes(decision.action));\n  const warnings = decisions.filter((decision) => decision.action === 'WARN').map((decision) => decision.warning);\n  if (heartbeat.critical_alert) warnings.push({ code: 'DISPATCH_HEARTBEAT_CRITICAL', consecutive_failures: heartbeat.consecutive_failures });\n  if (heartbeat.recovery_alert) warnings.push({ code: 'DISPATCH_HEARTBEAT_RECOVERY' });\n  return {\n    ok: true,\n    request_id: dispatchText(requestId),\n    operation_id: `op-dispatch-tick-${sha256(dispatchText(requestId)).slice(0, 32)}`,\n    status: 'PLANNED',\n    data: {\n      dispatch_count: dispatches.length,\n      warning_count: warnings.length,\n    },\n    decisions,\n    dispatches,\n    warnings,\n    heartbeat,\n    write_plan: [\n      heartbeat.history_row,\n      ...decisions.filter((decision) => decision.history_row).map((decision) => decision.history_row),\n    ].map((row) => ({ sheet: 'DISPATCH_HISTORY', action: 'APPEND', row })),\n  };\n}\n\n\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst trigger = $('Create Dispatcher Envelope').first()?.json?.envelope ?? {};\nconst historyRows = $items('Read DISPATCH_HISTORY')\n  .map((item) => item.json)\n  .filter((row) => row && Object.keys(row).length > 0);\nconst tables = gateway.response?.data?.dispatcher_tables\n  ?? gateway.data?.dispatcher_tables\n  ?? trigger.payload?.dispatcher_tables\n  ?? {};\nconst scheduleRows = tables.CONFIG_LICH ?? [];\nconst branchRows = tables.CONFIG_BRANCH ?? [];\nconst globalRows = tables.CONFIG_GLOBAL ?? [];\nconst thresholdRow = globalRows.find((row) => String(row.config_key ?? '').trim() === 'DISPATCH_HEARTBEAT_FAILURE_THRESHOLD');\nconst failureThreshold = Number(thresholdRow?.config_value);\nconst defaultTimezone = globalRows.find((row) => String(row.config_key ?? '').trim() === 'DEFAULT_TIMEZONE')?.config_value ?? '';\nconst configVersion = gateway.response?.config_version ?? gateway.config_version ?? trigger.config_version ?? '';\nconst tickAt = trigger.payload?.tick_at ?? new Date().toISOString();\n\nif (gateway.ok === false) {\n  return [{ json: {\n    ok: false,\n    status: 'ERROR',\n    error_code: gateway.response?.error_code ?? 'CONFIG_GATEWAY_UNAVAILABLE',\n    request_id: trigger.request_id ?? '',\n    operation_id: trigger.operation_id ?? '',\n    dispatches: [],\n    warnings: [],\n  } }];\n}\nif (!Array.isArray(scheduleRows) || !Array.isArray(branchRows) || !Number.isSafeInteger(failureThreshold) || failureThreshold < 1) {\n  return [{ json: {\n    ok: false,\n    status: 'ERROR',\n    error_code: 'DISPATCHER_CONFIG_SNAPSHOT_INCOMPLETE',\n    message_safe: 'Dispatcher configuration snapshot does not expose CONFIG_LICH, CONFIG_BRANCH and heartbeat threshold',\n    request_id: trigger.request_id ?? '',\n    operation_id: trigger.operation_id ?? '',\n    dispatches: [],\n    warnings: [],\n  } }];\n}\n\nconst plan = buildDispatchPlan({\n  scheduleRows,\n  branchRows,\n  historyRows,\n  defaultTimezone,\n  now: tickAt,\n  requestId: trigger.request_id,\n  configVersion,\n  heartbeatSuccess: gateway.ok !== false,\n  heartbeatFailureThreshold: failureThreshold,\n});\nreturn [{ json: plan }];"
+      },
+      "id": "kkb-v2-assemble-dispatcher-plan",
+      "name": "Assemble Dispatcher Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Assemble Dispatcher Plan').first()?.json ?? {}; return [{ json: result }];"
+      },
+      "id": "kkb-v2-return-dispatch-plan",
+      "name": "Return Dispatch Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Dispatcher Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Dispatcher Envelope": {
+      "main": [
+        [
+          {
+            "node": "Call Config Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Config Gateway": {
+      "main": [
+        [
+          {
+            "node": "Read DISPATCH_HISTORY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read DISPATCH_HISTORY": {
+      "main": [
+        [
+          {
+            "node": "Assemble Dispatcher Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Dispatcher Plan": {
+      "main": [
+        [
+          {
+            "node": "Return Dispatch Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "kkb-v2-wf04-v2-dispatcher-version",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "tags": []
+}
