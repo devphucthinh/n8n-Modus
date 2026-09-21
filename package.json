@@ -7,7 +7,7 @@
   },
   "scripts": {
     "test": "node --test --test-isolation=none",
-    "build:workflows": "node scripts/build-workflows.mjs",
+    "build:workflows": "node scripts/build-workflows.mjs && node scripts/build-wf04-dispatcher.mjs && node scripts/build-wf05-wf06-inventory.mjs && node scripts/build-WF08_V2_HOA_DON_NHAP.mjs && node scripts/build-wf09-v2-bao-cao-ban.mjs",
     "validate:workflows": "node scripts/validate-workflows.mjs",
     "build:config-workbook": "node scripts/build-config-workbook.mjs",
     "verify:config-workbook": "node scripts/verify-config-workbook.mjs",

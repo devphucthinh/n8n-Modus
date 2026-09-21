@@ -1,7 +1,14 @@
-import { CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
+import { ALL_SHEET_DEFINITIONS, ALL_SHEET_NAMES, CONFIG_SHEET_NAMES, CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, EXTENDED_CONFIG_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
 import { sha256 } from './sha256.mjs';
 
-const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO'];
+const FINGERPRINT_SHEETS = Object.freeze([
+  'CONFIG_SCHEMA',
+  'CONFIG_GLOBAL',
+  'CONFIG_BRANCH',
+  'CONFIG_USER',
+  'CONFIG_THONG_BAO',
+  ...EXTENDED_CONFIG_SHEET_NAMES,
+]);
 const SCHEMA_DATA_TYPES = new Set(['STRING', 'INTEGER', 'NUMBER', 'BOOLEAN', 'DATE', 'DATETIME']);
 const ACTIVE = 'ACTIVE';
 
@@ -73,6 +80,30 @@ function validateCoreTables(tables, envelope) {
   return null;
 }
 
+function requestedConfigSheetNames(envelope) {
+  const requested = envelope?.payload?.required_sheet_names ?? envelope?.payload?.required_config_tables ?? [];
+  if (!Array.isArray(requested)) return [];
+  return [...new Set(requested.map(asText).filter(Boolean))];
+}
+
+function validateRequestedTables(tables, requested, envelope) {
+  for (const sheetName of requested) {
+    if (!CONFIG_SHEET_NAMES.includes(sheetName)) {
+      return makeFailure('CONFIG_SHEET_NOT_EXPOSED', `Gateway cannot expose ${sheetName}`, envelope, { sheet_name: sheetName });
+    }
+    const rows = tableRows(tables, sheetName);
+    if (rows === null) return makeFailure('CONFIG_SHEET_MISSING', `Missing configuration sheet ${sheetName}`, envelope, { sheet_name: sheetName });
+    if (rows.length === 0) continue;
+    const keys = new Set(Object.keys(rows[0] ?? {}));
+    for (const columnName of ALL_SHEET_DEFINITIONS[sheetName]) {
+      if (!keys.has(columnName)) {
+        return makeFailure('CONFIG_COLUMN_MISSING', `Missing ${sheetName}.${columnName}`, envelope, { sheet_name: sheetName, column_name: columnName });
+      }
+    }
+  }
+  return null;
+}
+
 function parseAllowedValues(value) {
   const text = asText(value);
   if (!text) return [];
@@ -95,7 +126,7 @@ function readSchemaRules(tables, envelope) {
     const sheetName = asText(row.sheet_name);
     const columnName = asText(row.column_name);
     const dataType = asText(row.data_type).toUpperCase();
-    if (!CORE_SHEET_NAMES.includes(sheetName) || !CORE_SHEET_DEFINITIONS[sheetName]?.includes(columnName)) {
+    if (!ALL_SHEET_NAMES.includes(sheetName) || !ALL_SHEET_DEFINITIONS[sheetName]?.includes(columnName)) {
       return { error: makeFailure('CONFIG_SCHEMA_INVALID', `Invalid schema rule at row ${index + 2}`, envelope, { row_number: index + 2 }) };
     }
     if (!SCHEMA_DATA_TYPES.has(dataType)) {
@@ -106,7 +137,7 @@ function readSchemaRules(tables, envelope) {
     if ((referenceSheet && !referenceColumn) || (!referenceSheet && referenceColumn)) {
       return { error: makeFailure('CONFIG_SCHEMA_INVALID', `Incomplete reference for ${sheetName}.${columnName}`, envelope) };
     }
-    if (referenceSheet && (!CORE_SHEET_NAMES.includes(referenceSheet) || !CORE_SHEET_DEFINITIONS[referenceSheet].includes(referenceColumn))) {
+    if (referenceSheet && (!ALL_SHEET_NAMES.includes(referenceSheet) || !ALL_SHEET_DEFINITIONS[referenceSheet].includes(referenceColumn))) {
       return { error: makeFailure('CONFIG_SCHEMA_INVALID', `Invalid reference for ${sheetName}.${columnName}`, envelope) };
     }
     rules.push({
@@ -136,6 +167,21 @@ function readSchemaRules(tables, envelope) {
     }
   }
   return { rules };
+}
+
+function validateRequestedSchemaCoverage(rules, requested, envelope) {
+  const declared = new Set(rules.map((rule) => `${rule.sheet_name}.${rule.column_name}`));
+  for (const sheetName of requested) {
+    for (const columnName of ALL_SHEET_DEFINITIONS[sheetName]) {
+      if (!declared.has(`${sheetName}.${columnName}`)) {
+        return makeFailure('CONFIG_SCHEMA_INCOMPLETE', `Schema does not declare ${sheetName}.${columnName}`, envelope, {
+          sheet_name: sheetName,
+          column_name: columnName,
+        });
+      }
+    }
+  }
+  return null;
 }
 
 function typeValid(value, dataType) {
@@ -229,8 +275,48 @@ function configuredMessages(tables) {
     .map((row) => [asText(row.message_key), asText(row.message_text)]));
 }
 
-function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages }) {
+function activeRow(row) {
+  return asText(row?.trang_thai).toUpperCase() !== 'INACTIVE';
+}
+
+function requestedData(tables, requested, { snapshotId, configVersion, schemaVersion, now } = {}) {
+  if (requested.length === 0) return { data: {}, config_snapshot: null };
+  const configTables = Object.fromEntries(requested.map((sheetName) => [
+    sheetName,
+    (tableRows(tables, sheetName) ?? []).filter(activeRow).map((row) => structuredClone(row)),
+  ]));
+  const data = { config_tables: configTables };
+  if (requested.includes('CONFIG_BIA')) {
+    data.catalog = (configTables.CONFIG_BIA ?? [])
+      .filter((row) => ['YES', 'TRUE', '1'].includes(asText(row.tracked).toUpperCase()))
+      .map((row) => ({
+        ...row,
+        ma_bia: asText(row.item_id),
+        ten_bia: asText(row.item_name),
+        don_vi_dem: asText(row.inventory_unit),
+        display_label: `${asText(row.item_id)} — ${asText(row.item_name)} — ${asText(row.inventory_unit)}`,
+      }));
+  }
+  const dispatcherNames = ['CONFIG_LICH', 'CONFIG_BRANCH', 'CONFIG_GLOBAL'];
+  if (dispatcherNames.some((sheetName) => requested.includes(sheetName))) {
+    data.dispatcher_tables = Object.fromEntries(dispatcherNames
+      .filter((sheetName) => requested.includes(sheetName))
+      .map((sheetName) => [sheetName, configTables[sheetName] ?? []]));
+  }
+  const configSnapshot = {
+    config_snapshot_id: snapshotId,
+    config_version: configVersion,
+    schema_version: schemaVersion,
+    captured_at: now,
+    config: structuredClone(configTables),
+    catalog: structuredClone(data.catalog ?? []),
+  };
+  return { data, config_snapshot: configSnapshot };
+}
+
+function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, tables, requested, now }) {
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
+  const extended = requestedData(tables, requested, { snapshotId, configVersion, schemaVersion, now });
   return {
     status: 'OK',
     request_id: asText(envelope.request_id),
@@ -245,7 +331,8 @@ function statusResponse({ envelope, versionRow, configVersion, schemaVersion, sn
     active_branch_count: activeBranches.length,
     active_branches: activeBranches,
     messages,
-    data: {},
+    data: extended.data,
+    ...(extended.config_snapshot ? { config_snapshot: extended.config_snapshot } : {}),
     warnings: [],
   };
 }
@@ -264,9 +351,14 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   };
   const tableError = validateCoreTables(tables, normalizedEnvelope);
   if (tableError) return decorateFailure(tableError);
+  const requested = requestedConfigSheetNames(normalizedEnvelope);
+  const requestedTableError = validateRequestedTables(tables, requested, normalizedEnvelope);
+  if (requestedTableError) return decorateFailure(requestedTableError);
 
   const schemaResult = readSchemaRules(tables, normalizedEnvelope);
   if (schemaResult.error) return decorateFailure(schemaResult.error);
+  const requestedSchemaError = validateRequestedSchemaCoverage(schemaResult.rules, requested, normalizedEnvelope);
+  if (requestedSchemaError) return decorateFailure(requestedSchemaError);
   const rowError = validateRows(tables, schemaResult.rules, normalizedEnvelope);
   if (rowError) return decorateFailure(rowError);
 
@@ -297,7 +389,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   if (operationType === 'COMMAND_NOT_AVAILABLE') {
     return {
       ok: true,
-      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages }),
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, tables, requested, now }),
       write_plan: [],
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
     };
@@ -311,7 +403,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     if (sameVersion && sameFingerprint) {
       return {
         ok: true,
-        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages }),
+        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages, tables, requested, now }),
         write_plan: [],
         diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: true },
       };
@@ -346,7 +438,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   };
   return {
     ok: true,
-    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages }),
+    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, tables, requested, now }),
     write_plan: [
       { sheet: 'OPERATION', action: 'APPEND', row: operationRow },
       { sheet: 'CONFIG_SNAPSHOT', action: 'APPEND', row: snapshotRow },

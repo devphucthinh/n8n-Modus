@@ -174,7 +174,10 @@ export function openOrReuseInventorySession({
     });
   }
   const snapshot = snapshotInventoryConfig(configSnapshot);
-  const snapshotId = asText(snapshot.config_snapshot_id) || 'current';
+  const snapshotId = asText(snapshot.config_snapshot_id);
+  if (!snapshotId || !asText(snapshot.config_version)) {
+    return failure('CONFIG_SNAPSHOT_REQUIRED', 'An accepted configuration snapshot is required');
+  }
   const session = deepFreeze({
     session_id: `phien-${safeId(branch)}-${safeId(date)}-${safeId(snapshotId)}`,
     branch_id: branch,

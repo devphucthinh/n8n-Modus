@@ -86,16 +86,23 @@ The deterministic identities are:
 
 The same job key and operation ID are reused for retryable failures. A completed or in-flight key is skipped. An outside-window warning is recorded once for the occurrence and then skipped on later ticks.
 
-## Shared-contract gaps intentionally not changed
+## Shared-contract status at the integration fixed point
 
-The current Issue #2 shared contract remains unchanged as required:
+At the lane fixed point, the following items were intentionally left for
+integration. They are now defined in the shared contract on
+`codex/issue-2-v2-integration` and documented in
+`docs/parallel/shared-contract.md` and ADR 0023:
 
-1. `src/contracts/core-sheet-schema.mjs` declares the nine core tabs but not `CONFIG_LICH` or `DISPATCH_HISTORY`.
-2. `src/config-gateway/evaluate-config.mjs` reads/validates the current core set and fingerprints only its current five configuration sheets; it does not yet validate or snapshot `CONFIG_LICH`.
-3. The current Gateway response exposes version/fingerprint/status but does not expose normalized dispatcher tables. The WF04 export therefore expects a future gateway response at `response.data.dispatcher_tables` (with `CONFIG_LICH`, `CONFIG_BRANCH`, and `CONFIG_GLOBAL`), while accepting the same object at `data.dispatcher_tables` or as an explicit trigger payload override for controlled integration tests.
-4. The WF04 export reads `DISPATCH_HISTORY` as an operational ledger, but it will not claim or invoke a worker until the integration lane supplies an atomic append/claim protocol and worker workflow IDs.
-
-The next shared-contract change should add versioned definitions and schema rules for `CONFIG_LICH` and `DISPATCH_HISTORY`, include the relevant configuration in the Gateway fingerprint/snapshot, and expose the normalized dispatcher tables without exposing credentials or private payloads. That change belongs outside this lane.
+1. `core-sheet-schema.mjs` includes `CONFIG_LICH`, `DISPATCH_HISTORY`, the
+   catalog/mapping tables, and the canonical operational ledgers.
+2. The Gateway fingerprints requested extended configuration, validates its
+   schema coverage, and returns the requested dispatcher tables/catalog with
+   immutable snapshot metadata.
+3. WF04 emits a compare-and-set `ATOMIC_CLAIM` request keyed by
+   `DISPATCH:<dispatch_key>`. A real Apps Script `LockService` or equivalent
+   atomic endpoint is still required before production activation.
+4. The integration branch remains an inactive planning boundary: worker
+   invocation, external adapters and production writes are not enabled here.
 
 ## Integration tests still required
 

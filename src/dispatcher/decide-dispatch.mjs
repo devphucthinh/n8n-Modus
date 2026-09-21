@@ -1,4 +1,5 @@
 import { sha256 } from '../config-gateway/sha256.mjs';
+import { buildAtomicClaimRequest } from './atomic-claim.mjs';
 import { decideHeartbeat } from './heartbeat.mjs';
 import { parseScheduleRows } from './parse-schedule.mjs';
 
@@ -212,7 +213,7 @@ function historyRow({ identity, schedule, occurrence, status, attempt, now, retr
   };
 }
 
-function workerEnvelope({ identity, schedule, occurrence, requestId, configVersion, attempt }) {
+function workerEnvelope({ identity, schedule, occurrence, requestId, configVersion, configSnapshotId, attempt }) {
   const request = dispatchText(requestId);
   const version = dispatchText(configVersion);
   if (!request) throw new Error('DISPATCH_REQUEST_ID_REQUIRED');
@@ -225,6 +226,7 @@ function workerEnvelope({ identity, schedule, occurrence, requestId, configVersi
     actor_user_id: 'SYSTEM',
     business_date: occurrence.local_date,
     config_version: version,
+    config_snapshot_id: dispatchText(configSnapshotId) || null,
     payload: {
       dispatch_key: identity.dispatch_key,
       schedule_id: schedule.schedule_id,
@@ -253,6 +255,7 @@ export function decideDispatch({
   historyRows = [],
   requestId,
   configVersion,
+  configSnapshotId,
 } = {}) {
   if (!schedule || typeof schedule !== 'object') throw new TypeError('DISPATCH_SCHEDULE_REQUIRED');
   const nowInstant = parseDispatchInstant(now, 'now').toISOString();
@@ -314,7 +317,7 @@ export function decideDispatch({
     occurrence: evaluated.occurrence,
     ...identity,
     attempt_number: attempt,
-    envelope: workerEnvelope({ identity, schedule, occurrence: evaluated.occurrence, requestId, configVersion, attempt }),
+    envelope: workerEnvelope({ identity, schedule, occurrence: evaluated.occurrence, requestId, configVersion, configSnapshotId, attempt }),
     history_row: historyRow({
       identity,
       schedule,
@@ -336,6 +339,7 @@ export function buildDispatchPlan({
   now,
   requestId,
   configVersion,
+  configSnapshotId,
   heartbeatSuccess,
   heartbeatFailureThreshold,
 } = {}) {
@@ -346,6 +350,7 @@ export function buildDispatchPlan({
     historyRows,
     requestId,
     configVersion,
+    configSnapshotId,
   }));
   const heartbeat = decideHeartbeat({
     heartbeatRows,
@@ -354,6 +359,7 @@ export function buildDispatchPlan({
     failureThreshold: heartbeatFailureThreshold,
   });
   const dispatches = decisions.filter((decision) => ['DISPATCH', 'RETRY'].includes(decision.action));
+  const atomicClaims = dispatches.map((decision) => buildAtomicClaimRequest({ decision, now })).filter(Boolean);
   const warnings = decisions.filter((decision) => decision.action === 'WARN').map((decision) => decision.warning);
   if (heartbeat.critical_alert) warnings.push({ code: 'DISPATCH_HEARTBEAT_CRITICAL', consecutive_failures: heartbeat.consecutive_failures });
   if (heartbeat.recovery_alert) warnings.push({ code: 'DISPATCH_HEARTBEAT_RECOVERY' });
@@ -365,14 +371,21 @@ export function buildDispatchPlan({
     data: {
       dispatch_count: dispatches.length,
       warning_count: warnings.length,
+      atomic_claim_count: atomicClaims.length,
     },
     decisions,
     dispatches,
+    atomic_claims: atomicClaims,
     warnings,
     heartbeat,
     write_plan: [
       heartbeat.history_row,
       ...decisions.filter((decision) => decision.history_row).map((decision) => decision.history_row),
-    ].map((row) => ({ sheet: 'DISPATCH_HISTORY', action: 'APPEND', row })),
+    ].map((row) => ({
+      sheet: 'DISPATCH_HISTORY',
+      action: row.status === 'CLAIMED' ? 'ATOMIC_CLAIM' : 'APPEND',
+      unique_key: row.status === 'CLAIMED' ? `DISPATCH:${row.dispatch_key}` : undefined,
+      row,
+    })),
   };
 }

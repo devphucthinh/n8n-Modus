@@ -3,6 +3,7 @@ import { sourceFile, codeNode } from './helpers.mjs';
 export async function dispatcherCode() {
   return codeNode(`
 ${await sourceFile('src/config-gateway/sha256.mjs')}
+${await sourceFile('src/dispatcher/atomic-claim.mjs')}
 ${await sourceFile('src/dispatcher/parse-schedule.mjs')}
 ${await sourceFile('src/dispatcher/heartbeat.mjs')}
 ${await sourceFile('src/dispatcher/decide-dispatch.mjs')}
@@ -12,6 +13,7 @@ const trigger = $('Create Dispatcher Envelope').first()?.json?.envelope ?? {};
 const historyRows = $items('Read DISPATCH_HISTORY')
   .map((item) => item.json)
   .filter((row) => row && Object.keys(row).length > 0);
+const heartbeatRows = historyRows.filter((row) => String(row.record_type ?? '').toUpperCase() === 'HEARTBEAT');
 const tables = gateway.response?.data?.dispatcher_tables
   ?? gateway.data?.dispatcher_tables
   ?? trigger.payload?.dispatcher_tables
@@ -23,6 +25,7 @@ const thresholdRow = globalRows.find((row) => String(row.config_key ?? '').trim(
 const failureThreshold = Number(thresholdRow?.config_value);
 const defaultTimezone = globalRows.find((row) => String(row.config_key ?? '').trim() === 'DEFAULT_TIMEZONE')?.config_value ?? '';
 const configVersion = gateway.response?.config_version ?? gateway.config_version ?? trigger.config_version ?? '';
+const configSnapshotId = gateway.response?.config_snapshot_id ?? gateway.config_snapshot_id ?? trigger.config_snapshot_id ?? '';
 const tickAt = trigger.payload?.tick_at ?? new Date().toISOString();
 
 if (gateway.ok === false) {
@@ -53,10 +56,12 @@ const plan = buildDispatchPlan({
   scheduleRows,
   branchRows,
   historyRows,
+  heartbeatRows,
   defaultTimezone,
   now: tickAt,
   requestId: trigger.request_id,
   configVersion,
+  configSnapshotId,
   heartbeatSuccess: gateway.ok !== false,
   heartbeatFailureThreshold: failureThreshold,
 });

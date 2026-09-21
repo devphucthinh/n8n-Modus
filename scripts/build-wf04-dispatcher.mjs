@@ -59,6 +59,10 @@ const envelope = node({
   },
   position: pos(280, 0),
 });
+envelope.parameters.jsCode = envelope.parameters.jsCode.replace(
+  "payload: { intent: 'READ_STATUS', tick_at: tickAt }",
+  "payload: { intent: 'READ_STATUS', tick_at: tickAt, required_sheet_names: ['CONFIG_LICH', 'CONFIG_BRANCH', 'CONFIG_GLOBAL'] }",
+);
 const gateway = node({
   name: 'Call Config Gateway',
   type: 'n8n-nodes-base.executeWorkflow',

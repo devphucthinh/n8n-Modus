@@ -15,6 +15,7 @@ test('normalizes a status request without inventing business configuration', () 
   assert.equal(result.payload.intent, 'READ_STATUS');
   assert.equal(result.business_date, null);
   assert.equal(result.branch_id, null);
+  assert.equal(result.config_snapshot_id, null);
 });
 
 test('rejects a request without immutable IDs', () => {

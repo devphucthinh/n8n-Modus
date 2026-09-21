@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GATEWAY_SHEET_NAMES } from '../../src/contracts/core-sheet-schema.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const workflowDir = path.join(root, 'workflows');
@@ -50,7 +51,7 @@ test('keeps live configuration reads behind the Config Gateway', async () => {
   assert.equal(router.nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheets').length, 0);
   const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
   const reads = gateway.nodes.filter((node) => node.name.startsWith('Read '));
-  assert.equal(reads.length, 9);
+  assert.equal(reads.length, GATEWAY_SHEET_NAMES.length);
   assert.ok(reads.every((node) => node.alwaysOutputData === true));
   assert.deepEqual(gateway.connections['Read ERROR_BIA'].main[0].map((target) => target.node), ['Assemble Config Tables']);
   assert.deepEqual(gateway.connections['Execute Workflow Trigger'].main[0].map((target) => target.node), ['Read CONFIG_SCHEMA']);

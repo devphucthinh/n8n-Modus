@@ -44,6 +44,22 @@ test('only CONFIRMED Dòng nhập bia are staged for the Sổ nhập bia', () =>
   assert.equal(result.ledger_rows[0].line_id, 'line-001');
   assert.equal(result.ledger_rows[0].sheet, 'LOG_NHAP');
   assert.equal(result.ledger_rows[0].domain_term, 'Sổ nhập bia');
+  assert.equal(result.ledger_rows[0].config_snapshot_id, 'config-snapshot-001');
+  assert.equal(result.ledger_rows[0].source_evidence_ids_json, '["evidence-001"]');
   assert.equal(result.operation_row.status, 'PREPARED');
   assert.equal(result.operation_row.idempotency_key, 'operation-commit-001');
+});
+
+test('rejects a purchase commit without immutable configuration lineage', () => {
+  const result = planStagedLedgerWrite({
+    invoice: { ...invoice, config_snapshot_id: '' },
+    lines: [baseLine()],
+    operation_id: 'operation-commit-002',
+    request_id: 'request-commit-002',
+    now: '2026-09-21T10:40:00.000Z',
+    calculation_version: 'purchase-ingestion-v1',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error_code, 'CONFIG_SNAPSHOT_REQUIRED');
 });

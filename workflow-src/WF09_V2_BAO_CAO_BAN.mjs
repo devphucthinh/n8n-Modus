@@ -61,6 +61,7 @@ const drafts = split.groups.map((group) => {
     source_file_id: payload.source_file_id,
     file_hash: payload.file_hash,
     source_config_id: selection.source_config_id,
+    config_snapshot_id: payload.config_snapshot_id ?? envelope.config_snapshot_id ?? null,
     require_separate_approver: selection.require_separate_approver,
     branch_id: group.branch_id ?? envelope.branch_id ?? payload.branch_id,
     business_date: group.business_date,
@@ -72,10 +73,11 @@ const drafts = split.groups.map((group) => {
   };
 });
 
+const blockedByInput = split.invalid_rows.length > 0 || drafts.some((draft) => draft.preview?.status === 'CHO_SUA_FILE');
 return [{ json: {
   ...envelope,
-  ok: true,
-  status: split.invalid_rows.length > 0 ? 'CHO_SUA_FILE' : 'PREVIEW_READY',
+  ok: !blockedByInput,
+  status: blockedByInput ? 'CHO_SUA_FILE' : 'PREVIEW_READY',
   source_match: match,
   source_config: selection.source_config,
   invalid_rows: split.invalid_rows,

@@ -27,6 +27,7 @@ export function normalizeEnvelope(input) {
     branch_id: input.branch_id == null || input.branch_id === '' ? null : String(input.branch_id),
     business_date: input.business_date == null || input.business_date === '' ? null : String(input.business_date),
     config_version: input.config_version == null || input.config_version === '' ? null : String(input.config_version),
+    config_snapshot_id: input.config_snapshot_id == null || input.config_snapshot_id === '' ? null : String(input.config_snapshot_id),
     payload: input.payload && typeof input.payload === 'object' ? clone(input.payload) : {},
   };
 }

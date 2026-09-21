@@ -1,9 +1,9 @@
 {
-  "workbook": "C:\\Users\\TD-996\\Documents\\ChatGPT\\n8n\\outputs\\issue-2\\KKB_V2_CONFIG_BASELINE.xlsx",
+  "workbook": "C:\\Users\\TD-996\\.codex\\worktrees\\v2-integration\\n8n\\outputs\\issue-2\\KKB_V2_CONFIG_BASELINE.xlsx",
   "sheets": [
     {
       "name": "CONFIG_SCHEMA",
-      "rows": 73,
+      "rows": 388,
       "columns": 13
     },
     {
@@ -45,6 +45,131 @@
       "name": "ERROR_BIA",
       "rows": 1,
       "columns": 14
+    },
+    {
+      "name": "CONFIG_LICH",
+      "rows": 1,
+      "columns": 10
+    },
+    {
+      "name": "DISPATCH_HISTORY",
+      "rows": 1,
+      "columns": 24
+    },
+    {
+      "name": "CONFIG_TOPIC",
+      "rows": 1,
+      "columns": 6
+    },
+    {
+      "name": "CONFIG_DRIVE",
+      "rows": 1,
+      "columns": 6
+    },
+    {
+      "name": "CONFIG_BIA",
+      "rows": 1,
+      "columns": 7
+    },
+    {
+      "name": "CONFIG_QUY_DOI",
+      "rows": 1,
+      "columns": 9
+    },
+    {
+      "name": "CONFIG_MAPPING_NHAP",
+      "rows": 1,
+      "columns": 7
+    },
+    {
+      "name": "CONFIG_NGUON_BAN",
+      "rows": 1,
+      "columns": 6
+    },
+    {
+      "name": "CONFIG_NGUON_BAN_COT",
+      "rows": 1,
+      "columns": 7
+    },
+    {
+      "name": "CONFIG_MAPPING_BAN",
+      "rows": 1,
+      "columns": 6
+    },
+    {
+      "name": "CONFIG_ROLE_PERMISSION",
+      "rows": 1,
+      "columns": 4
+    },
+    {
+      "name": "CONFIG_USER_ROLE",
+      "rows": 1,
+      "columns": 7
+    },
+    {
+      "name": "STATE_CHO",
+      "rows": 1,
+      "columns": 10
+    },
+    {
+      "name": "HOA_DON_NHAP",
+      "rows": 1,
+      "columns": 16
+    },
+    {
+      "name": "ANH_HOA_DON",
+      "rows": 1,
+      "columns": 14
+    },
+    {
+      "name": "OCR_RAW",
+      "rows": 1,
+      "columns": 8
+    },
+    {
+      "name": "DONG_NHAP",
+      "rows": 1,
+      "columns": 27
+    },
+    {
+      "name": "LOG_NHAP",
+      "rows": 1,
+      "columns": 16
+    },
+    {
+      "name": "DOT_NHAP_BAN",
+      "rows": 1,
+      "columns": 17
+    },
+    {
+      "name": "DONG_BAN_NGUON",
+      "rows": 1,
+      "columns": 18
+    },
+    {
+      "name": "LOG_BAN",
+      "rows": 1,
+      "columns": 19
+    },
+    {
+      "name": "PHIEN_KIEM_KE",
+      "rows": 1,
+      "columns": 14
+    },
+    {
+      "name": "BIA_LOG",
+      "rows": 1,
+      "columns": 20
+    },
+    {
+      "name": "DIEU_CHINH_SO",
+      "rows": 1,
+      "columns": 21
+    },
+    {
+      "name": "EVENT_LOG",
+      "rows": 1,
+      "columns": 16
     }
   ],
   "errors": []

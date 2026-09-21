@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { gatewayCode, assembleCode, planRowCode, errorInputCode } from '../workflow-src/WF01_V2_CONFIG_GATEWAY.mjs';
 import { errorCode, errorRowCode, returnErrorCode } from '../workflow-src/WF02_V2_ERROR_HANDLER.mjs';
 import { normalizeCode, formatCode, unsupportedCode } from '../workflow-src/WF03_V2_TELEGRAM_ROUTER.mjs';
+import { GATEWAY_SHEET_NAMES } from '../src/contracts/core-sheet-schema.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(root, 'workflows');
-const SHEETS = ['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA'];
+const SHEETS = GATEWAY_SHEET_NAMES;
 const GOOGLE_CREDENTIAL = 'GOOGLE_SHEETS_KKB_V2';
 const TELEGRAM_CREDENTIAL = 'TELEGRAM_KKB_V2';
 

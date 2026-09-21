@@ -22,4 +22,6 @@ test('exports an inactive ten-minute dispatcher without a Telegram Trigger', asy
   assert.equal(gatewayCall.parameters.workflowId.value, 'PASTE_WF01_WORKFLOW_ID');
   assert.match(code, /SCHEDULED_JOB/);
   assert.match(code, /DISPATCH_HISTORY/);
+  assert.match(code, /ATOMIC_CLAIM/);
+  assert.match(code, /atomic_claims/);
 });

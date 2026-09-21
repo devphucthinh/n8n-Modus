@@ -10,7 +10,10 @@ const gatewayResult = $('Call Config Gateway').first()?.json ?? {};
 const envelope = normalizeEnvelope(triggerInput.envelope ?? triggerInput);
 if (gatewayResult.ok === false) return [{ json: gatewayResult }];
 const payload = envelope.payload ?? {};
-const configSnapshot = payload.config_snapshot ?? payload.configSnapshot ?? gatewayResult.response?.config_snapshot ?? {};
+const configSnapshot = gatewayResult.response?.config_snapshot ?? gatewayResult.response?.data?.config_snapshot ?? {};
+if (!configSnapshot.config_snapshot_id || !configSnapshot.config_version) {
+  return [{ json: { ok: false, status: 'ERROR', error_code: 'CONFIG_SNAPSHOT_REQUIRED', request_id: envelope.request_id, operation_id: envelope.operation_id } }];
+}
 const result = openOrReuseInventorySession({
   branch_id: envelope.branch_id ?? payload.branch_id,
   business_date: envelope.business_date ?? payload.business_date,

@@ -107,6 +107,11 @@ export function planCountSave({
 } = {}) {
   const validation = validateCountValue(value, item);
   if (validation.status !== 'VALID') return { ok: false, ...validation, write_plan: [] };
+  if (Array.isArray(session.catalog) && session.catalog.length > 0) {
+    const requestedCode = itemCode(item);
+    const catalogItem = session.catalog.find((candidate) => itemCode(candidate) === requestedCode);
+    if (!catalogItem) return { ok: false, error_code: 'ITEM_NOT_IN_CATALOG', write_plan: [] };
+  }
   const currentSessionStatus = asText(session.status).toUpperCase();
   if (currentSessionStatus === 'EXPIRED') return { ok: false, error_code: 'SESSION_EXPIRED_REOPEN_REQUIRED', write_plan: [] };
   if (currentSessionStatus === 'CANCELLED') return { ok: false, error_code: 'SESSION_CANCELLED', write_plan: [] };

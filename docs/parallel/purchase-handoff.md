@@ -40,7 +40,7 @@ These are the columns the pure module and adapter plan expect. They are a propos
 | `ANH_HOA_DON` | `evidence_id`, `invoice_id`, `ordinal`, `branch_id`, `sender_user_id`, `source_message_id`, `telegram_file_id`, `original_file_name`, `mime_type`, `checksum`, `drive_file_id`, `storage_status`, `received_at`, `created_at`. The original evidence is stored before OCR. |
 | `OCR_RAW` | `ocr_raw_id`, `invoice_id`, `provider`, `evidence_ids_json`, `raw_payload_json`, `completed_at`, `status`, `created_at`. This is Kết quả OCR gốc and must not be overwritten by review edits. |
 | `DONG_NHAP` | `line_id`, `invoice_id`, `ocr_raw_id`, `source_line_number`, `source_item_code`, `item_id`, `source_unit`, `inventory_unit`, `source_quantity`, `inventory_quantity`, `numerator`, `denominator`, `line_total_before_vat`, `line_discount_amount`, `vat_amount`, `converted_unit_price`, `supplier_recorded`, `price_warning_json`, `review_status`, `reviewed_by`, `reviewed_at`, `review_reason`, `adjustment_id`, `operation_id`, `revision`, `created_at`, `updated_at`. |
-| `LOG_NHAP` — proposed physical name only | The domain term is **Sổ nhập bia**. Shared-schema confirmation is required before adopting this physical name. Proposed columns: `row_id`, `operation_id`, `invoice_id`, `line_id`, `branch_id`, `business_date`, `item_id`, `inventory_quantity`, `inventory_unit`, `converted_unit_price`, `supplier_recorded`, `source_evidence_ids_json`, `calculation_version`, `status`, `created_at`. Only `CONFIRMED` Dòng nhập bia can produce rows here. |
+| `LOG_NHAP` | Canonical physical sheet for **Sổ nhập bia**, as fixed by the V2 spec. Columns: `row_id`, `operation_id`, `invoice_id`, `line_id`, `branch_id`, `business_date`, `item_id`, `inventory_quantity`, `inventory_unit`, `converted_unit_price`, `supplier_recorded`, `source_evidence_ids_json`, `calculation_version`, `config_snapshot_id`, `status`, `created_at`. Only `CONFIRMED` Dòng nhập bia can produce rows here. |
 | `DIEU_CHINH_SO` | `adjustment_id`, `source_type`, `source_invoice_id`, `source_line_id`, `branch_id`, `business_date`, `item_id`, `quantity_delta`, `inventory_unit`, `reason`, `created_by`, `approved_by`, `status`, `operation_id`, `created_at`, `approved_at`. Negative quantities and returns must use this path rather than an unreviewed negative Sổ nhập bia row. |
 | `EVENT_LOG` | `event_id`, `event_type`, `technical_key`, `request_id`, `operation_id`, `branch_id`, `actor_user_id`, `entity_type`, `entity_id`, `outcome`, `created_at`. `technical_key` is the replay/idempotency evidence for Lặp kỹ thuật. |
 | `ERROR_BIA` | Existing Issue #2 columns `error_id`, `error_code`, `error_class`, `retryable`, `message_safe`, `workflow`, `node`, `operation_id`, `request_id`, `config_version`, `fingerprint`, `status`, `created_at`, `resolved_at`. |
@@ -48,12 +48,17 @@ These are the columns the pure module and adapter plan expect. They are a propos
 ## Shared-schema gaps to resolve before integration
 
 1. `src/contracts/core-sheet-schema.mjs` currently defines only the Issue #2 core tables. The purchase tables above, `CONFIG_TOPIC`, `CONFIG_DRIVE`, `CONFIG_BIA`, `CONFIG_QUY_DOI`, `CONFIG_MAPPING_NHAP`, `STATE_CHO`, `DIEU_CHINH_SO`, and `EVENT_LOG` need an approved shared schema extension.
-2. `LOG_NHAP` is not an approved shared physical name in this lane. Confirm the physical sheet name for the domain term Sổ nhập bia and update the adapter contract before import.
+2. The shared contract fixes `LOG_NHAP` as the physical name for Sổ nhập bia, matching the V2 spec; no competing `SO_NHAP_BIA` sheet should be created.
 3. The shared schema needs approved allowed values for invoice/review statuses, `storage_status`, `operation_type`, and `calculation_version` handling.
 4. Config Gateway fingerprinting must include the approved purchase configuration tables. This lane deliberately does not modify the existing Gateway or its schema definitions.
-5. The shared envelope has the stable Issue #2 fields; `config_snapshot_id` is currently carried in purchase payload/records rather than as a new shared envelope field. Confirm that placement during integration.
-6. The repository’s shared workflow builder still builds WF01–WF03. This lane uses a uniquely named build script for WF08; decide whether the main builder should invoke it in a later integration change.
-7. n8n Code nodes cannot import these ESM modules directly. The adapter implementation must either bundle pure functions into Code nodes or call a separately packaged worker; do not add imports or credentials to the inactive export without an approved packaging decision.
+5. The shared envelope now carries optional `config_snapshot_id`; purchase records
+   require the same immutable lineage before staging a ledger write.
+6. The main workflow builder invokes the WF08 builder on the integration branch;
+   generated exports remain inactive.
+7. n8n Code nodes cannot import these ESM modules directly. The adapter
+   implementation must either bundle pure functions into Code nodes or call a
+   separately packaged worker; do not add imports or credentials to the inactive
+   export without an approved packaging decision.
 
 ## Live smoke tests needed later
 

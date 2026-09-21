@@ -61,7 +61,8 @@ function parseTime(value) {
 
 function parseDays(value) {
   const normalized = scheduleText(value).toUpperCase();
-  if (!normalized || normalized === '*') return [1, 2, 3, 4, 5, 6, 7];
+  if (!normalized) throw new Error('DISPATCH_CONFIG_REQUIRED:days_of_week');
+  if (normalized === '*') return [1, 2, 3, 4, 5, 6, 7];
   const values = normalized.split(/[\s,|]+/).filter(Boolean).flatMap((token) => {
     if (/^[1-7]$/.test(token)) return [Number(token)];
     const day = DAY_NAMES.get(token);
@@ -86,7 +87,7 @@ function validateTimezone(timezone) {
 }
 
 function activeBranch(branchRows, branchId) {
-  if (!Array.isArray(branchRows) || branchRows.length === 0) return null;
+  if (!Array.isArray(branchRows) || branchRows.length === 0) throw new Error('DISPATCH_BRANCH_TABLE_MISSING');
   const row = branchRows.find((candidate) => scheduleText(candidate?.branch_id) === branchId);
   if (!row) throw new Error(`DISPATCH_BRANCH_NOT_FOUND:${branchId}`);
   return row;

@@ -8,8 +8,15 @@ ${await sourceFile('src/inventory/count-entry.mjs')}
 ${await sourceFile('src/inventory/review-finalize.mjs')}
 
 const triggerInput = $('Execute Workflow Trigger').first()?.json ?? {};
+const gatewayResult = $('Call Config Gateway').first()?.json ?? {};
+if (gatewayResult.ok === false) return [{ json: gatewayResult }];
 const envelope = normalizeEnvelope(triggerInput.envelope ?? triggerInput);
 const payload = envelope.payload ?? {};
+const gatewaySnapshotId = gatewayResult.response?.config_snapshot_id ?? gatewayResult.response?.config_snapshot?.config_snapshot_id ?? '';
+if (!gatewaySnapshotId) return [{ json: { ok: false, status: 'ERROR', error_code: 'CONFIG_SNAPSHOT_REQUIRED', request_id: envelope.request_id, operation_id: envelope.operation_id } }];
+if (payload.session?.config_snapshot_id && payload.session.config_snapshot_id !== gatewaySnapshotId) {
+  return [{ json: { ok: false, status: 'ERROR', error_code: 'CONFIG_SNAPSHOT_MISMATCH', request_id: envelope.request_id, operation_id: envelope.operation_id } }];
+}
 const intent = String(payload.intent ?? payload.action ?? 'SAVE_COUNT').toUpperCase();
 let result;
 if (intent === 'REVIEW') {

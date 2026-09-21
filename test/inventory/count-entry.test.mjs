@@ -180,3 +180,23 @@ test('rejects count entry while the session is expired until it is reopened', ()
   assert.equal(result.error_code, 'SESSION_EXPIRED_REOPEN_REQUIRED');
   assert.deepEqual(result.write_plan, []);
 });
+
+test('rejects an item outside the session catalog', () => {
+  const result = planCountSave({
+    session: {
+      session_id: 'phien-1',
+      status: 'ACTIVE',
+      catalog: [{ ma_bia: 'BIA-001', ten_bia: 'Bia 001', don_vi_dem: 'chai' }],
+    },
+    item: { ma_bia: 'NOT_IN_CATALOG', ten_bia: 'Lạ', don_vi_dem: 'chai' },
+    value: 1,
+    expected_revision: 0,
+    operation_id: 'op-catalog-1',
+    request_id: 'req-catalog-1',
+    actor_user_id: 'user-1',
+    now: '2026-09-21T18:00:00.000Z',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error_code, 'ITEM_NOT_IN_CATALOG');
+});

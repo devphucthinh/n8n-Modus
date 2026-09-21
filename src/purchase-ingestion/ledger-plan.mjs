@@ -15,6 +15,10 @@ function checksum(value) {
 }
 
 export function planStagedLedgerWrite({ invoice, lines, operation_id: operationId, request_id: requestId, now, calculation_version: calculationVersion }) {
+  const configSnapshotId = String(invoice?.config_snapshot_id ?? '').trim();
+  if (!configSnapshotId) {
+    return { ok: false, status: 'CONFIG_SNAPSHOT_REQUIRED', error_code: 'CONFIG_SNAPSHOT_REQUIRED' };
+  }
   const incomplete = lines.filter(({ review_status: status }) => !TERMINAL_LINE_STATES.has(status));
   if (incomplete.length > 0) {
     return {
@@ -41,9 +45,10 @@ export function planStagedLedgerWrite({ invoice, lines, operation_id: operationI
       inventory_unit: line.inventory_unit,
       converted_unit_price: line.converted_unit_price,
       supplier_recorded: invoice.supplier_recorded ?? line.supplier_recorded ?? null,
-      source_evidence_ids: [...(line.source_evidence_ids ?? [])],
-      calculation_version: calculationVersion,
-      status: 'PREPARED',
+       source_evidence_ids_json: JSON.stringify(line.source_evidence_ids ?? []),
+       calculation_version: calculationVersion,
+       config_snapshot_id: configSnapshotId,
+       status: 'PREPARED',
     }));
   const operationRow = {
     operation_id: operationId,
@@ -65,7 +70,7 @@ export function planStagedLedgerWrite({ invoice, lines, operation_id: operationI
     ledger_rows: ledgerRows,
     write_plan: [
       { sheet: 'OPERATION', action: 'APPEND', rows: [operationRow] },
-      { sheet: 'DONG_NHAP', action: 'APPEND', rows: lines.map((line) => ({ ...line, status: 'PREPARED' })) },
+      { sheet: 'DONG_NHAP', action: 'APPEND', rows: lines.map((line) => ({ ...line, config_snapshot_id: configSnapshotId, status: 'PREPARED' })) },
       { sheet: 'LOG_NHAP', action: 'APPEND', rows: ledgerRows },
       { sheet: 'HOA_DON_NHAP', action: 'APPEND_VERSION', rows: [{ ...invoice, status: 'PREPARED', operation_id: operationId }] },
     ],

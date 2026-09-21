@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES } from '../src/contracts/core-sheet-schema.mjs';
+import { ALL_SHEET_DEFINITIONS, ALL_SHEET_NAMES, CONFIG_SHEET_NAMES } from '../src/contracts/core-sheet-schema.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(root, 'outputs', 'issue-2');
@@ -9,10 +9,10 @@ const outputPath = path.join(outputDir, 'KKB_V2_CONFIG_BASELINE.xlsx');
 const artifactRoot = process.env.KKB_ARTIFACT_TOOL_ROOT || 'C:/Users/TD-996/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/@oai/artifact-tool';
 const { Workbook, SpreadsheetFile } = await import(pathToFileURL(path.join(artifactRoot, 'dist', 'artifact_tool.mjs')).href);
 
-const header = (sheetName) => CORE_SHEET_DEFINITIONS[sheetName];
+const header = (sheetName) => ALL_SHEET_DEFINITIONS[sheetName];
 const row = (sheetName, values) => header(sheetName).map((column) => values[column] ?? '');
 const schemas = {
-  CONFIG_SCHEMA: CORE_SHEET_NAMES.flatMap((sheetName) => header(sheetName).map((columnName, ordinal) => row('CONFIG_SCHEMA', {
+  CONFIG_SCHEMA: ALL_SHEET_NAMES.flatMap((sheetName) => header(sheetName).map((columnName, ordinal) => row('CONFIG_SCHEMA', {
     schema_rule_id: `rule-${sheetName}-${columnName}`,
     schema_version: '1.0',
     sheet_name: sheetName,
@@ -70,7 +70,7 @@ function styleSheet(sheet, sheetName, rowCount, columnCount) {
     const body = sheet.getRangeByIndexes(1, 0, rowCount - 1, columnCount);
     body.format.wrapText = false;
     body.format.borders = { preset: 'insideHorizontal', style: 'thin', color: '#D9E2F3' };
-    if (['CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO'].includes(sheetName)) body.format.fill = '#FFF2CC';
+    if (CONFIG_SHEET_NAMES.includes(sheetName)) body.format.fill = '#FFF2CC';
   }
   headings.format.rowHeight = 32;
   sheet.freezePanes.freezeRows(1);
@@ -84,7 +84,7 @@ function styleSheet(sheet, sheetName, rowCount, columnCount) {
 }
 
 function addValidation(sheet, sheetName) {
-  const count = Math.max(schemas[sheetName].length + 1, 2);
+  const count = Math.max((schemas[sheetName] ?? []).length + 1, 2);
   if (sheetName === 'CONFIG_VERSION') {
     sheet.getRange(`C2:C${count}`).dataValidation = { rule: { type: 'list', values: ['YES', 'NO'] } };
     sheet.getRange(`G2:G${count}`).dataValidation = { rule: { type: 'list', values: ['ACTIVE', 'INACTIVE'] } };
@@ -94,7 +94,7 @@ function addValidation(sheet, sheetName) {
     sheet.getRange(`F2:F${count}`).dataValidation = { rule: { type: 'list', values: ['YES', 'NO'] } };
     sheet.getRange(`M2:M${count}`).dataValidation = { rule: { type: 'list', values: ['ACTIVE', 'INACTIVE'] } };
   }
-  if (['CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO'].includes(sheetName)) {
+  if (CONFIG_SHEET_NAMES.includes(sheetName) && sheetName !== 'CONFIG_SCHEMA' && sheetName !== 'CONFIG_VERSION') {
     const statusColumn = header(sheetName).indexOf('trang_thai');
     const letter = String.fromCharCode(65 + statusColumn);
     sheet.getRange(`${letter}2:${letter}${count}`).dataValidation = { rule: { type: 'list', values: ['ACTIVE', 'INACTIVE'] } };
@@ -102,10 +102,10 @@ function addValidation(sheet, sheetName) {
 }
 
 const workbook = Workbook.create();
-for (const sheetName of CORE_SHEET_NAMES) {
+for (const sheetName of ALL_SHEET_NAMES) {
   const sheet = workbook.worksheets.add(sheetName);
   const columns = header(sheetName);
-  const values = [columns, ...schemas[sheetName]];
+  const values = [columns, ...(schemas[sheetName] ?? [])];
   sheet.getRangeByIndexes(0, 0, values.length, columns.length).values = values;
   styleSheet(sheet, sheetName, values.length, columns.length);
   addValidation(sheet, sheetName);

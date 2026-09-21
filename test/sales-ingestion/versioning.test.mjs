@@ -28,6 +28,7 @@ function draft(overrides = {}) {
     file_hash: 'file-hash-002',
     normalized_content_hash: contentHash,
     source_config_id: 'POS_A',
+    config_snapshot_id: 'cfg-v1-sales',
     branch_id: 'CN1',
     business_date: '2026-09-18',
     uploader_user_id: 'user-uploader',
@@ -221,6 +222,19 @@ test('negative quantities require an adjustment and never publish automatically'
   assert.equal(adjustment.status, 'PENDING_APPROVAL');
   assert.equal(adjustment.rows[0].reference_source_line_id, 'line-file-002-9');
   assert.equal(adjustment.rows[0].quantity_inventory_units, -2);
+});
+
+test('SYSTEM_ZERO waits for any non-terminal pending upload, not only CHO_SUA_FILE', () => {
+  const result = createSystemZero({
+    branchId: 'CN1',
+    businessDate: '2026-09-18',
+    trackedItems: [{ item_id: 'TIGER', inventory_unit: 'chai', tracked: 'YES', trang_thai: 'ACTIVE' }],
+    pendingUploads: [{ upload_id: 'upload-pending', branch_id: 'CN1', business_date: '2026-09-18', status: 'PREVIEW_READY' }],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error_code, 'SYSTEM_ZERO_BLOCKED_PENDING_FILE');
+  assert.deepEqual(result.blocking_upload_ids, ['upload-pending']);
 });
 
 test('separate approver policy blocks self-publish only when configured', () => {

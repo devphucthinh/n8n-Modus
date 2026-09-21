@@ -77,10 +77,12 @@ function zeroLines(trackedItems) {
  * real or broken file waiting for the same branch/date.
  */
 export function createSystemZero({ branchId, businessDate, trackedItems = [], pendingUploads = [], existingVersions = [], now = new Date().toISOString() } = {}) {
+  const terminalUploadStatuses = new Set(['CANCELLED', 'PUBLISHED', 'SUPERSEDED', 'COMMITTED', 'REJECTED', 'DUPLICATE_FILE', 'NO_CHANGE']);
   const blockingUploads = (Array.isArray(pendingUploads) ? pendingUploads : []).filter((upload) => (
     (!upload.branch_id || asText(upload.branch_id) === asText(branchId))
       && (!upload.business_date || asText(upload.business_date) === asText(businessDate))
-      && asText(upload.status).toUpperCase() === 'CHO_SUA_FILE'
+      && asText(upload.status)
+      && !terminalUploadStatuses.has(asText(upload.status).toUpperCase())
   ));
   if (blockingUploads.length > 0) {
     return {
@@ -157,6 +159,8 @@ export function planPublish({ draft, existingUploads = [], existingVersions = []
   if (hasNegative) return { ok: false, error_code: 'NEGATIVE_QUANTITY_REQUIRES_ADJUSTMENT', adjustment_required: true };
   if (preview.status === 'CHO_SUA_FILE') return { ok: false, error_code: 'CHO_SUA_FILE', status: 'CHO_SUA_FILE' };
   if (preview.can_publish !== true) return { ok: false, error_code: asText(preview.status) || 'PREVIEW_NOT_READY' };
+  const configSnapshotId = asText(draft.config_snapshot_id);
+  if (!configSnapshotId) return { ok: false, error_code: 'CONFIG_SNAPSHOT_REQUIRED' };
 
   const approver = authorizeSalesPublish({
     requireSeparateApprover: requireSeparateApprover === 'NO' ? draft.require_separate_approver ?? requireSeparateApprover : requireSeparateApprover,
@@ -196,6 +200,7 @@ export function planPublish({ draft, existingUploads = [], existingVersions = []
     status: 'ACTIVE',
     file_hash: asText(draft.file_hash),
     normalized_content_hash: normalizedContentHash,
+    config_snapshot_id: configSnapshotId,
     uploader_user_id: asText(draft.uploader_user_id),
     approver_user_id: asText(draft.approver_user_id),
     created_at: now,

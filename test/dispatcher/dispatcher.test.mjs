@@ -208,4 +208,11 @@ test('builds a dispatcher plan containing worker envelopes and the heartbeat rec
   assert.equal(result.dispatches[0].envelope.event_type, 'SCHEDULED_JOB');
   assert.equal(result.heartbeat.history_row.record_type, 'HEARTBEAT');
   assert.equal(result.decisions.length, 1);
+  assert.equal(result.data.atomic_claim_count, 1);
+  assert.equal(result.write_plan.find((step) => step.row.status === 'CLAIMED').action, 'ATOMIC_CLAIM');
+});
+
+test('rejects a schedule without an explicit weekday or branch reference', () => {
+  assert.throws(() => parseScheduleRows({ rows: [scheduleRow({ days_of_week: '' })], branchRows }), /DISPATCH_CONFIG_REQUIRED:days_of_week/);
+  assert.throws(() => parseScheduleRows({ rows: [scheduleRow()], branchRows: [] }), /DISPATCH_BRANCH_TABLE_MISSING/);
 });
