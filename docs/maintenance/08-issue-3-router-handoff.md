@@ -5,12 +5,15 @@ Tài liệu này là handoff triển khai cho PR của issue #3. Nó không ch�
 ## Phạm vi đã triển khai
 
 - WF03 là Telegram ingress duy nhất và nhận `message`, `edited_message`, `callback_query`.
-- Mỗi update được chuẩn hóa thành envelope có `request_id=operation_id=tg-<update_id>`; callback, bot suffix, tham số và forum thread được giữ lại.
+- Mỗi update được chuẩn hóa thành envelope có `request_id=operation_id=tg-<update_id>`; callback, bot suffix, tham số và forum thread được giữ lại. Callback có thêm `payload.idempotency_key=tg-callback-<callback_id>` để chống xử lý lặp khi Telegram phát lại với `update_id` khác.
 - Config Gateway đọc thêm sáu tab router khi request không phải `/trangthai`: `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_TOPIC`, `CONFIG_LENH`, và đọc `EVENT_LOG` để ghi access-denied audit.
 - Router trả quyết định thuần (`STATUS`, `HELP`, `ROUTE`, `RETRY`, `DENY`) trước khi một worker được gọi. Workflow export không chứa danh sách role, permission, topic, worker hoặc command nghiệp vụ.
 - `/help` lấy lệnh active từ `CONFIG_LENH`, sắp theo `ordinal`, hiển thị command, cú pháp, mô tả, quyền và ví dụ.
 - `/trangthai` vẫn là đường đọc trạng thái cho user active; user unknown/inactive nhận cùng một denial an toàn.
 - `/retry <error_id>` chỉ nhận lỗi retryable và giữ lại `operation_id` cùng `request_id`/idempotency key ban đầu.
+- Access-denied audit dùng `event_id` xác định theo idempotency key và không append lần hai cho cùng một update/callback.
+- WF03 khôi phục `reply_target`/`text` sau khi ghi `EVENT_LOG`; callback query được node `Answer Telegram Callback` xác nhận bằng Telegram `answerQuery`.
+- `/trangthai` không đưa write plan ledger của Gateway vào nhánh audit Telegram.
 
 ## Google Sheet cần tạo/cấu hình
 
@@ -70,6 +73,7 @@ Ghi execution ID và Telegram message ID, không ghi giá trị bí mật:
 | `/kiemke` có role + topic hợp lệ | `decision.kind=ROUTE`, đúng `topic_type`, `branch_id`, `worker_workflow`, operation/idempotency key |
 | `/kiemke` sai topic/quyền | `decision.kind=DENY`, không gọi worker |
 | Gửi lại cùng `update_id` | Cùng operation/idempotency key, không tạo business effect thứ hai |
+| Gửi lại cùng callback ID nhưng `update_id` khác | Không route lần hai; cùng `payload.idempotency_key` |
 | `/retry <error_id>` retryable bởi ADMIN | Giữ operation/idempotency key gốc |
 | `/retry` non-retryable hoặc không phải ADMIN | Denial an toàn, không retry |
 

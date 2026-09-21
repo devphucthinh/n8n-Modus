@@ -25,11 +25,13 @@ export function normalizeTelegramUpdate(update) {
     throw new Error('Telegram update requires update_id, message.chat.id and message.from.id');
   }
   const parsed = parseCommand(callback?.data ?? message.text);
+  const intent = callback && parsed.intent === 'COMMAND_NOT_AVAILABLE' ? 'ROUTE_COMMAND' : parsed.intent;
   const stableId = text(updateId);
   const replyTarget = {
     chat_id: text(message.chat.id),
     message_thread_id: message.message_thread_id == null ? null : text(message.message_thread_id),
   };
+  const idempotencyKey = callback?.id ? `tg-callback-${text(callback.id)}` : `tg-${stableId}`;
   return {
     envelope: {
       request_id: `tg-${stableId}`,
@@ -41,11 +43,12 @@ export function normalizeTelegramUpdate(update) {
       config_version: null,
       payload: {
         command: parsed.command,
-        intent: parsed.intent,
+        intent,
         args: parsed.args,
         raw_text: parsed.raw_text,
         callback_id: callback?.id ? text(callback.id) : null,
         callback_data: callback?.data ? text(callback.data) : null,
+        idempotency_key: idempotencyKey,
       },
     },
     reply_target: replyTarget,

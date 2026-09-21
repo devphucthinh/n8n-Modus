@@ -370,7 +370,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     operation_id: operationId,
     request_id: requestId,
     operation_type: operationType,
-    idempotency_key: requestId || operationId,
+    idempotency_key: asText(envelope.payload?.idempotency_key) || requestId || operationId,
     expected_row_count: '1',
     actual_row_count: '',
     checksum: fingerprint,

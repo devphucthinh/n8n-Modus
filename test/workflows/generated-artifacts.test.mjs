@@ -67,3 +67,15 @@ test('WF03 carries router table requests and keeps command policy Sheet-driven',
   assert.doesNotMatch(JSON.stringify(router), /WF05_V2_MO_PHIEN_KIEM_KE|KIEM_KE_WRITE/);
   assert.ok(router.nodes.some((node) => node.name === 'Append EVENT_LOG'));
 });
+
+test('WF03 preserves the reply after audit writes and acknowledges callback queries', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  assert.ok(router.nodes.some((node) => node.name === 'Restore Router Reply'));
+  assert.deepEqual(router.connections['Append EVENT_LOG'].main[0].map((target) => target.node), ['Restore Router Reply']);
+  assert.deepEqual(router.connections['Restore Router Reply'].main[0].map((target) => target.node), ['Send Telegram Reply']);
+  const callback = router.nodes.find((node) => node.name === 'Answer Telegram Callback');
+  assert.equal(callback.parameters.resource, 'callback');
+  assert.equal(callback.parameters.operation, 'answerQuery');
+  assert.deepEqual(router.connections['Callback query?'].main[0].map((target) => target.node), ['Answer Telegram Callback']);
+});

@@ -2,14 +2,14 @@ const asText = (value) => (value == null ? '' : String(value).trim());
 
 export function getActiveCommands(tables, locale = 'vi-VN') {
   return (Array.isArray(tables?.CONFIG_LENH) ? tables.CONFIG_LENH : [])
-    .filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE')
+    .filter((row) => asText(row.trang_thai).toUpperCase() === 'ACTIVE')
     .filter((row) => !row.locale || asText(row.locale) === locale)
     .sort((left, right) => Number(asText(left.ordinal) || 0) - Number(asText(right.ordinal) || 0));
 }
 
 export function formatHelp({ tables, locale = 'vi-VN' } = {}) {
   const commands = getActiveCommands(tables, locale);
-  const header = (tables?.CONFIG_THONG_BAO ?? []).filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE' && asText(row.locale || locale) === locale && asText(row.message_key) === 'HELP_HEADER').at(-1)?.message_text || 'Danh sách lệnh Kiểm kê bia V2:';
+  const header = (tables?.CONFIG_THONG_BAO ?? []).filter((row) => asText(row.trang_thai).toUpperCase() === 'ACTIVE' && asText(row.locale || locale) === locale && asText(row.message_key) === 'HELP_HEADER').at(-1)?.message_text || 'Danh sách lệnh Kiểm kê bia V2:';
   const lines = [header];
   for (const row of commands) {
     const command = asText(row.command_text) || asText(row.command_code);

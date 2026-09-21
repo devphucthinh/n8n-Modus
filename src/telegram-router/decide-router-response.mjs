@@ -50,11 +50,14 @@ function routerHelpText(config, context) {
 
 function routerAuditPlan(normalized, context, errorCode, topic, now) {
   if (!Array.isArray(context?.EVENT_LOG)) return [];
+  const eventKey = routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.operation_id);
+  const eventId = `evt-${eventKey}-${routerText(errorCode).toLowerCase()}`;
+  if (context.EVENT_LOG.some((row) => routerText(row.event_id) === eventId)) return [];
   return [{
     sheet: 'EVENT_LOG',
     action: 'APPEND',
     row: {
-      event_id: `evt-${routerText(normalized?.envelope?.operation_id)}-${routerText(errorCode).toLowerCase()}`,
+      event_id: eventId,
       event_type: 'TELEGRAM_ACCESS',
       request_id: routerText(normalized?.envelope?.request_id),
       operation_id: routerText(normalized?.envelope?.operation_id),
@@ -107,10 +110,10 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
     : null;
   const command = routerText(callbackCommand || normalized?.command).toLowerCase();
   const base = { kind: 'DENY', write_plan: [] };
-  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: gatewayResult?.write_plan ?? [] }, text: gatewayResult?.ok ? routerStatusText(gatewayResult, context) : routerErrorText(gatewayResult, context, response.error_code, response.error_id) };
+  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: [] }, text: gatewayResult?.ok ? routerStatusText(gatewayResult, context) : routerErrorText(gatewayResult, context, response.error_code, response.error_id) };
   if (!gatewayResult?.ok) return { decision: { kind: 'DENY', write_plan: response.error_code === 'USER_NOT_ACTIVE' ? routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', null, now) : [] }, text: routerErrorText(gatewayResult, context, response.error_code, response.error_id) };
-  const operationId = routerText(normalized?.envelope?.operation_id);
-  if ((context.OPERATION ?? []).some((row) => routerText(row.status).toUpperCase() === 'COMMITTED' && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).includes(operationId))) {
+  const operationKeys = [normalized?.envelope?.operation_id, normalized?.envelope?.request_id, normalized?.envelope?.payload?.idempotency_key].map(routerText).filter(Boolean);
+  if ((context.OPERATION ?? []).some((row) => routerText(row.status).toUpperCase() === 'COMMITTED' && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).some((value) => operationKeys.includes(value)))) {
     const messages = routerMessages(gatewayResult, context);
     return { decision: { kind: 'DUPLICATE', write_plan: [] }, text: routerText(messages.get('ROUTER_DUPLICATE') || 'Yêu cầu đã được xử lý.') };
   }
@@ -151,7 +154,7 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
         branch_id: routerText(topic?.branch_id),
         permission_code: routerText(commandRow.permission_code) || null,
         operation_id: routerText(normalized?.envelope?.operation_id),
-        idempotency_key: routerText(normalized?.envelope?.request_id),
+        idempotency_key: routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id),
       },
       write_plan: [],
     },

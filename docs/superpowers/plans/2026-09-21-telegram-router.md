@@ -17,7 +17,7 @@
 - Machine codes use uppercase ASCII identifiers; Vietnamese labels are display-only.
 - `/trangthai` is read-only for every active configured user; every other command needs its configured permission.
 - `branch_id='*'` is the global role scope; inactive or unknown users are denied without revealing roles, branches, or configuration.
-- Repeated `update_id`, callback ID, or retry operation has one effective business effect and reuses the original operation/idempotency key.
+- Repeated `update_id`, callback ID, or retry operation has one effective business effect. Message updates use `tg-<update_id>`; callback updates add a stable `payload.idempotency_key=tg-callback-<callback_id>` and reuse it across Telegram re-deliveries.
 - Workflow exports are inactive, contain no secrets, and use `GOOGLE_SHEETS_KKB_V2`/`TELEGRAM_KKB_V2` credential names.
 - Existing WF01/WF02/WF03 Issue #2 behavior and live `/trangthai` path must remain green.
 

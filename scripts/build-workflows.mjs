@@ -162,8 +162,11 @@ async function buildRouterWorkflow() {
   const projectAudit = node({ name: 'Project EVENT_LOG row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const entry = $json.decision?.write_plan?.[0]; if (!entry) return []; return [{ json: entry.row }];" }, position: pos(1480, 120) });
   const appendAudit = googleSheetNode('Append EVENT_LOG', 'EVENT_LOG', 'append', { columns: { mappingMode: 'autoMapInputData' } });
   appendAudit.position = pos(1700, 120);
+  const restoreReply = node({ name: 'Restore Router Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const reply = $('Router Decision').first()?.json ?? {}; return [{ json: reply }];" }, position: pos(1920, 120), notes: 'Restores reply_target/text after Google Sheets replaces the item with the appended audit row.' });
   const send = node({ name: 'Send Telegram Reply', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'message', operation: 'sendMessage', chatId: '={{$json.reply_target.chat_id}}', text: '={{$json.text}}', additionalFields: { message_thread_id: '={{$json.reply_target.message_thread_id}}' } }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(1300, -40) });
-  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, decision, auditCheck, projectAudit, appendAudit, send];
+  const callbackCheck = node({ name: 'Callback query?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { boolean: [{ value: "={{!!$('Normalize Telegram Update').first()?.json?.callback?.id}}", operation: 'isTrue' }] } }, position: pos(1540, -40), notes: 'Only callback_query updates need answerQuery; normal messages skip this branch.' });
+  const callbackAnswer = node({ name: 'Answer Telegram Callback', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'callback', operation: 'answerQuery', queryId: "={{$('Normalize Telegram Update').first()?.json?.callback?.id}}", additionalFields: {} }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(1780, -40), notes: 'Acknowledges the inline-keyboard callback so Telegram clears its loading indicator.' });
+  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, decision, auditCheck, projectAudit, appendAudit, restoreReply, send, callbackCheck, callbackAnswer];
   const connections = {};
   link(connections, trigger.name, normalize.name);
   link(connections, normalize.name, statusCheck.name);
@@ -175,7 +178,10 @@ async function buildRouterWorkflow() {
   link(connections, auditCheck.name, projectAudit.name, 0);
   link(connections, auditCheck.name, send.name, 1);
   link(connections, projectAudit.name, appendAudit.name);
-  link(connections, appendAudit.name, send.name);
+  link(connections, appendAudit.name, restoreReply.name);
+  link(connections, restoreReply.name, send.name);
+  link(connections, send.name, callbackCheck.name);
+  link(connections, callbackCheck.name, callbackAnswer.name, 0);
   return baseWorkflow('WF03_V2_TELEGRAM_ROUTER', nodes, connections);
 }
 

@@ -35,3 +35,10 @@ test('help renders all active configured commands and omits inactive commands', 
   assert.match(result.text, /Quyền/);
   assert.doesNotMatch(result.text, /\/an/);
 });
+
+test('help omits commands without an explicit ACTIVE status', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_LENH.push({ command_code: 'CMD_BLANK', command_text: '/blank', syntax: '/blank', description_vi: 'Không bật', permission_code: '', topic_type: '', worker_workflow: '', example: '/blank', ordinal: '99', trang_thai: '' });
+  const result = formatHelp({ tables });
+  assert.doesNotMatch(result.text, /\/blank/);
+});
