@@ -129,7 +129,7 @@ async function buildGatewayWorkflow() {
   const commitOperationRow = node({ name: 'Commit OPERATION row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(3) }, position: pos(3010, -100) });
   const commitOperation = googleSheetUpdateNode('Commit OPERATION', 'OPERATION', 'operation_id', ['operation_id', 'status', 'actual_row_count', 'updated_at']);
   commitOperation.position = pos(3250, -100);
-  const returnStatus = node({ name: 'Return Gateway Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const result = $('Evaluate Config Gateway').first()?.json ?? {}; return [{ json: result }];" }, position: pos(3490, -100) });
+  const returnStatus = node({ name: 'Return Gateway Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const input = $input.first()?.json ?? {}; if (input.reply_target?.chat_id && input.response?.message_safe) return []; const result = $('Evaluate Config Gateway').first()?.json ?? {}; return [{ json: result }];" }, position: pos(3490, -100) });
   const errorInput = node({ name: 'Prepare Error Handler Input', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: errorInputCode() }, position: pos(1570, 180) });
   const errorCall = node({ name: 'Call Error Handler', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF02_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(1810, 180), notes: 'Bound to WF02_V2_ERROR_HANDLER in the current n8n Cloud project.' });
   const nodes = [trigger, ...reads, routerRequested, ...routerSelectors, ...routerReads, assemble, decision, branch, writeRequired, prepareOperationRow, prepareOperation, prepareSnapshotRow, prepareSnapshot, commitSnapshotRow, commitSnapshot, commitOperationRow, commitOperation, returnStatus, errorInput, errorCall];
@@ -168,6 +168,7 @@ async function buildGatewayWorkflow() {
   link(connections, commitOperationRow.name, commitOperation.name);
   link(connections, commitOperation.name, returnStatus.name);
   link(connections, errorInput.name, errorCall.name);
+  link(connections, errorCall.name, returnStatus.name);
   return baseWorkflow('WF01_V2_CONFIG_GATEWAY', nodes, connections);
 }
 

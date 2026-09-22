@@ -20,6 +20,24 @@ function canonicalJson(value) {
   return JSON.stringify(canonicalize(value));
 }
 
+function stripSheetRowMetadata(value) {
+  if (Array.isArray(value)) return value.map(stripSheetRowMetadata);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => key !== 'row_number')
+      .map(([key, child]) => [key, stripSheetRowMetadata(child)]));
+  }
+  return value;
+}
+
+function containsSheetRowMetadata(value) {
+  if (Array.isArray(value)) return value.some(containsSheetRowMetadata);
+  if (value && typeof value === 'object') {
+    return Object.entries(value).some(([key, child]) => key === 'row_number' || containsSheetRowMetadata(child));
+  }
+  return false;
+}
+
 function safeErrorId(operationId, errorCode) {
   const operation = asText(operationId).replace(/[^A-Za-z0-9_-]/g, '_') || 'unknown';
   return `err-${operation}-${errorCode}`;
@@ -213,8 +231,9 @@ function validateRows(tables, rules, envelope) {
 
 function normalizeConfigTables(tables) {
   return Object.fromEntries(FINGERPRINT_SHEETS.filter((sheetName) => tableRows(tables, sheetName) !== null).map((sheetName) => {
+    const columns = ALL_SHEET_DEFINITIONS[sheetName] ?? [];
     const rows = (tableRows(tables, sheetName) ?? []).map((row) => Object.fromEntries(
-      Object.entries(row ?? {}).map(([key, value]) => [key, value == null ? '' : String(value).trim()]),
+      columns.map((column) => [column, row?.[column] == null ? '' : String(row[column]).trim()]),
     ));
     rows.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
     return [sheetName, rows];
@@ -238,14 +257,28 @@ function isVersionGreater(current, previous) {
 }
 
 function committedPredecessor(tables) {
-  const committedOperations = new Set((tableRows(tables, 'OPERATION') ?? [])
+  const committedOperations = new Map((tableRows(tables, 'OPERATION') ?? [])
     .filter((row) => asText(row.status).toUpperCase() === 'COMMITTED')
-    .map((row) => asText(row.operation_id))
-    .filter(Boolean));
+    .map((row) => [asText(row.operation_id), asText(row.operation_type).toUpperCase()])
+    .filter(([operationId]) => Boolean(operationId)));
   return (tableRows(tables, 'CONFIG_SNAPSHOT') ?? [])
-    .filter((row) => asText(row.status).toUpperCase() === 'COMMITTED' && committedOperations.has(asText(row.operation_id)))
+    .filter((row) => {
+      if (asText(row.status).toUpperCase() !== 'COMMITTED') return false;
+      const operationType = committedOperations.get(asText(row.operation_id));
+      return operationType !== 'READ_STATUS' && operationType !== 'READ_HELP' && operationType !== 'COMMAND_NOT_AVAILABLE';
+    })
     .sort((left, right) => asText(left.created_at).localeCompare(asText(right.created_at)))
     .at(-1) ?? null;
+}
+
+function snapshotContentMatches(predecessor, normalizedConfigJson) {
+  try {
+    const stored = JSON.parse(asText(predecessor?.normalized_config_json));
+    if (!containsSheetRowMetadata(stored)) return false;
+    return canonicalJson(stripSheetRowMetadata(stored)) === normalizedConfigJson;
+  } catch {
+    return false;
+  }
 }
 
 function configuredMessages(tables) {
@@ -355,9 +388,18 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
     };
   }
+  if (operationType === 'READ_STATUS' || operationType === 'READ_HELP') {
+    return {
+      ok: true,
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+      write_plan: [],
+      diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
+    };
+  }
   if (predecessor) {
     const sameVersion = configVersion === asText(predecessor.config_version);
-    const sameFingerprint = fingerprint === asText(predecessor.fingerprint);
+    const sameFingerprint = fingerprint === asText(predecessor.fingerprint)
+      || snapshotContentMatches(predecessor, normalizedConfigJson);
     if (sameVersion && !sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'Configuration content changed without incrementing config_version', normalizedEnvelope));
     if (!sameVersion && sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_EMPTY_CHANGE', 'config_version changed without configuration content changing', normalizedEnvelope));
     if (!sameVersion && !isVersionGreater(configVersion, predecessor.config_version)) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'config_version must increase', normalizedEnvelope));

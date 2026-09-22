@@ -6,7 +6,7 @@ import { readdir } from 'node:fs/promises';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { envelope, validConfig } from '../fixtures/config/valid-config.mjs';
+import { envelope, validConfig, validConfigWithRouterTables } from '../fixtures/config/valid-config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const workflowDir = path.join(root, 'workflows');
@@ -119,6 +119,31 @@ test('does not dereference optional router reads that were skipped', async () =>
   assert.match(evaluate.parameters.jsCode, /assembled\.tables/);
 });
 
+test('does not duplicate a reply after Error Handler sends a validation error', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const errorInput = gateway.nodes.find((node) => node.name === 'Prepare Error Handler Input');
+  const returnStatus = gateway.nodes.find((node) => node.name === 'Return Gateway Result');
+  assert.deepEqual(gateway.connections['Call Error Handler'].main[0].map((target) => target.node), ['Return Gateway Result']);
+  assert.match(errorInput.parameters.jsCode, /reply_target/);
+  assert.match(returnStatus.parameters.jsCode, /reply_target/);
+  assert.match(returnStatus.parameters.jsCode, /return \[\];/);
+});
+
+test('suppresses the parent reply when Error Handler already returned a Telegram reply', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const returnStatus = gateway.nodes.find((node) => node.name === 'Return Gateway Result');
+  const sandbox = {
+    $input: { first: () => ({ json: { reply_target: { chat_id: 'chat-1' }, response: { message_safe: 'Đã gửi lỗi.' } } }) },
+    $: () => ({ first: () => ({ json: { ok: false, response: { error_code: 'CONFIG_INVALID' } } }) }),
+  };
+  vm.createContext(sandbox);
+  const output = await vm.runInContext(`(async () => { ${returnStatus.parameters.jsCode}\n})()`, sandbox, { timeout: 1000 });
+  assert.equal(Array.isArray(output), true);
+  assert.equal(output.length, 0);
+});
+
 test('does not depend on structuredClone in n8n Code nodes', async () => {
   const workflows = await loadGeneratedWorkflows();
   const code = workflows.flatMap((workflow) => workflow.nodes)
@@ -147,6 +172,29 @@ test('executes Config Gateway code without structuredClone in an n8n-like sandbo
   assert.equal(output[0].json.response.status, 'OK');
 });
 
+test('generated Config Gateway keeps Google Sheets metadata out of snapshot cells', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const evaluator = gateway.nodes.find((node) => node.name === 'Evaluate Config Gateway');
+  const tables = validConfigWithRouterTables();
+  for (const rows of Object.values(tables)) {
+    if (Array.isArray(rows)) rows.forEach((row, index) => { row.row_number = String(index + 2); });
+  }
+  const sandbox = {
+    $input: { first: () => ({ json: { envelope: { ...envelope, payload: { command: '/kiemke', intent: 'START_OPERATION' } }, tables } }) },
+    $items: () => [],
+    $: () => ({ first: () => ({ json: {} }) }),
+    structuredClone: undefined,
+    TextEncoder,
+  };
+
+  vm.createContext(sandbox);
+  const output = await vm.runInContext(`(async () => { ${evaluator.parameters.jsCode}\n})()`, sandbox, { timeout: 1000 });
+  const snapshotPayload = output[0].json.write_plan[1].row.normalized_config_json;
+  assert.doesNotMatch(snapshotPayload, /row_number/);
+  assert.ok(snapshotPayload.length < 50000);
+});
+
 test('WF03 carries router table requests and keeps command policy Sheet-driven', async () => {
   const workflows = await loadGeneratedWorkflows();
   const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
@@ -156,7 +204,7 @@ test('WF03 carries router table requests and keeps command policy Sheet-driven',
   assert.match(decision.parameters.jsCode, /CONFIG_LENH/);
   const normalize = router.nodes.find((node) => node.name === 'Normalize Telegram Update');
   assert.ok(normalize.parameters.jsCode.includes('requiredSheetNames(normalized.command)'));
-  assert.ok(normalize.parameters.jsCode.includes("if (normalized === '/help') return ['CONFIG_LENH']"));
+  assert.ok(normalize.parameters.jsCode.includes("if (normalized === '/help') return ['CONFIG_LENH', 'CONFIG_PERMISSION']"));
   assert.doesNotMatch(JSON.stringify(router), /WF05_V2_MO_PHIEN_KIEM_KE|KIEM_KE_WRITE/);
   assert.ok(router.nodes.some((node) => node.name === 'Append EVENT_LOG'));
   assert.ok(router.nodes.some((node) => node.name === 'Append OPERATION reservation'));

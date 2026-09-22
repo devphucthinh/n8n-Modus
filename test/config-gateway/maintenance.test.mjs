@@ -44,11 +44,11 @@ test('treats a request without an explicit status intent as a new operation', ()
   assert.equal(result.response.error_code, 'CONFIG_MAINTENANCE');
 });
 
-test('reuses a committed snapshot for an idempotent status request', () => {
+test('does not reuse a committed read-only snapshot for a status request', () => {
   const first = evaluateConfigGateway({ envelope, tables: validConfig(), now: FIXED_NOW });
   const tables = validConfig();
   tables.CONFIG_SNAPSHOT = [completeRow('CONFIG_SNAPSHOT', {
-    config_snapshot_id: first.response.config_snapshot_id,
+    config_snapshot_id: first.response.config_snapshot_id ?? 'cfg-v1-status-old',
     config_version: 'v1',
     schema_version: '1.0',
     fingerprint: first.response.fingerprint,
@@ -57,9 +57,9 @@ test('reuses a committed snapshot for an idempotent status request', () => {
     status: 'COMMITTED',
     created_at: FIXED_NOW,
   })];
-  tables.OPERATION = [completeRow('OPERATION', { operation_id: envelope.operation_id, status: 'COMMITTED' })];
+  tables.OPERATION = [completeRow('OPERATION', { operation_id: envelope.operation_id, operation_type: 'READ_STATUS', status: 'COMMITTED' })];
   const result = evaluateConfigGateway({ envelope, tables, now: FIXED_NOW });
   assert.equal(result.ok, true);
   assert.deepEqual(result.write_plan, []);
-  assert.equal(result.response.config_snapshot_id, first.response.config_snapshot_id);
+  assert.equal(result.response.config_snapshot_id, null);
 });

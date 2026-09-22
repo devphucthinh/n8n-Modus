@@ -16,6 +16,6 @@ const FULL_ROUTER_SHEETS = Object.freeze([
 export function requiredSheetNames(command) {
   const normalized = command == null ? '' : String(command).trim().toLowerCase();
   if (normalized === '/trangthai') return [];
-  if (normalized === '/help') return ['CONFIG_LENH'];
+  if (normalized === '/help') return ['CONFIG_LENH', 'CONFIG_PERMISSION'];
   return [...FULL_ROUTER_SHEETS];
 }

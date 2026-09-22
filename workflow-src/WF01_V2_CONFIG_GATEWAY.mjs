@@ -51,7 +51,8 @@ return [{ json: row }];
 export function errorInputCode() {
   return codeNode(`
 const result = $('Evaluate Config Gateway').first()?.json ?? {};
-const envelope = $('Execute Workflow Trigger').first()?.json?.envelope ?? $('Execute Workflow Trigger').first()?.json ?? {};
+const triggerInput = $('Execute Workflow Trigger').first()?.json ?? {};
+const envelope = triggerInput.envelope ?? triggerInput;
 return [{ json: {
   error: result.response ?? result,
   context: {
@@ -59,6 +60,7 @@ return [{ json: {
     operation_id: envelope.operation_id,
     workflow: 'WF01_V2_CONFIG_GATEWAY',
   },
+  reply_target: triggerInput.reply_target ?? null,
 } }];
 `);
 }
