@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { TextEncoder } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { readdir } from 'node:fs/promises';
+import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { envelope, validConfig } from '../fixtures/config/valid-config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const workflowDir = path.join(root, 'workflows');
@@ -114,6 +117,34 @@ test('does not dereference optional router reads that were skipped', async () =>
   assert.match(assemble.parameters.jsCode, /catch\s*\{/);
   assert.match(evaluate.parameters.jsCode, /\$input\.first\(\)\?\.json/);
   assert.match(evaluate.parameters.jsCode, /assembled\.tables/);
+});
+
+test('does not depend on structuredClone in n8n Code nodes', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const code = workflows.flatMap((workflow) => workflow.nodes)
+    .filter((node) => node.type === 'n8n-nodes-base.code')
+    .map((node) => node.parameters?.jsCode ?? '')
+    .join('\n');
+  assert.doesNotMatch(code, /\bstructuredClone\s*\(/);
+});
+
+test('executes Config Gateway code without structuredClone in an n8n-like sandbox', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const evaluator = gateway.nodes.find((node) => node.name === 'Evaluate Config Gateway');
+  const sandbox = {
+    $input: { first: () => ({ json: { envelope, tables: validConfig() } }) },
+    $items: () => [],
+    $: () => ({ first: () => ({ json: {} }) }),
+    structuredClone: undefined,
+    TextEncoder,
+  };
+
+  vm.createContext(sandbox);
+  const output = await vm.runInContext(`(async () => { ${evaluator.parameters.jsCode}\n})()`, sandbox, { timeout: 1000 });
+
+  assert.equal(output[0].json.ok, true);
+  assert.equal(output[0].json.response.status, 'OK');
 });
 
 test('WF03 carries router table requests and keeps command policy Sheet-driven', async () => {
