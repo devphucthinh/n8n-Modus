@@ -3,12 +3,11 @@ import { sourceFile, codeNode } from './helpers.mjs';
 export async function normalizeCode() {
   return codeNode(`
 ${await sourceFile('src/telegram-router/normalize-status-update.mjs')}
+${await sourceFile('src/telegram-router/required-sheet-names.mjs')}
 
 const update = $input.first()?.json ?? {};
 const normalized = normalizeTelegramUpdate(update);
-normalized.envelope.payload.required_sheet_names = normalized.command === '/trangthai'
-  ? []
-  : ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'];
+normalized.envelope.payload.required_sheet_names = requiredSheetNames(normalized.command);
 return [{ json: normalized }];
 `);
 }

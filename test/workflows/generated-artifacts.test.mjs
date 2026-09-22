@@ -64,6 +64,9 @@ test('WF03 carries router table requests and keeps command policy Sheet-driven',
   const decision = router.nodes.find((node) => node.name === 'Router Decision');
   assert.ok(decision);
   assert.match(decision.parameters.jsCode, /CONFIG_LENH/);
+  const normalize = router.nodes.find((node) => node.name === 'Normalize Telegram Update');
+  assert.ok(normalize.parameters.jsCode.includes("normalized.command === '/help'"));
+  assert.ok(normalize.parameters.jsCode.includes("['CONFIG_LENH']"));
   assert.doesNotMatch(JSON.stringify(router), /WF05_V2_MO_PHIEN_KIEM_KE|KIEM_KE_WRITE/);
   assert.ok(router.nodes.some((node) => node.name === 'Append EVENT_LOG'));
   assert.ok(router.nodes.some((node) => node.name === 'Append OPERATION reservation'));
