@@ -9,13 +9,13 @@ export function getActiveCommands(tables, locale = 'vi-VN') {
 
 export function formatHelp({ tables, locale = 'vi-VN' } = {}) {
   const commands = getActiveCommands(tables, locale);
-  const header = (tables?.CONFIG_THONG_BAO ?? []).filter((row) => asText(row.trang_thai).toUpperCase() === 'ACTIVE' && asText(row.locale || locale) === locale && asText(row.message_key) === 'HELP_HEADER').at(-1)?.message_text || 'Danh sách lệnh Kiểm kê bia V2:';
+  const header = (tables?.CONFIG_THONG_BAO ?? []).filter((row) => asText(row.trang_thai).toUpperCase() === 'ACTIVE' && asText(row.locale || locale) === locale && asText(row.message_key) === 'HELP_HEADER').at(-1)?.message_text || '';
   const lines = [header];
   for (const row of commands) {
     const command = asText(row.command_text) || asText(row.command_code);
     const syntax = asText(row.syntax) || command;
-    const description = asText(row.description_vi) || 'Chưa có mô tả';
-    const permission = asText(row.permission_code) || 'Không yêu cầu';
+    const description = asText(row.description_vi);
+    const permission = asText(row.permission_code);
     const example = asText(row.example) || syntax;
     lines.push(`${command} — ${description}`);
     lines.push(`  Cú pháp: ${syntax}`);

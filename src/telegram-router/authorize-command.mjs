@@ -54,3 +54,16 @@ export function hasPermission({ actorUserId, permissionCode, tables, now, topic 
     .filter((row) => asText(row.branch_id) === '*' || !topic || asText(row.branch_id) === asText(topic.branch_id))
     .some((row) => roles.has(asText(row.role_code)) && mapping.some((entry) => asText(entry.role_code) === asText(row.role_code)));
 }
+
+export function hasRole({ actorUserId, roleCode, tables, now, branchId = '*' } = {}) {
+  const userId = asText(actorUserId);
+  const requestedRole = asText(roleCode);
+  const user = (tables?.CONFIG_USER ?? []).find((row) => asText(row.user_id) === userId);
+  if (!user || !active(user) || !requestedRole) return false;
+  const roles = new Set((tables?.CONFIG_ROLE ?? []).filter(active).map((row) => asText(row.role_code)));
+  return roles.has(requestedRole) && (tables?.CONFIG_USER_ROLE ?? []).some((row) => active(row)
+    && asText(row.user_id) === userId
+    && asText(row.role_code) === requestedRole
+    && asText(row.branch_id) === asText(branchId)
+    && withinEffectiveWindow(row, now));
+}

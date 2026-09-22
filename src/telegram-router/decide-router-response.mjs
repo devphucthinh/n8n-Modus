@@ -16,7 +16,7 @@ function routerRender(template, values) {
 function routerErrorText(gatewayResult, context, errorCode, errorId) {
   const map = routerMessages(gatewayResult, context);
   const key = errorCode === 'COMMAND_NOT_AVAILABLE' ? 'COMMAND_NOT_AVAILABLE' : errorCode === 'USER_NOT_ACTIVE' ? 'USER_NOT_ACTIVE' : 'ERROR_GENERIC';
-  return routerRender(map.get(key) || map.get('ERROR_GENERIC') || 'Không thể hoàn tất thao tác. Mã lỗi: {error_id}', { error_id: errorId || 'unknown' }).slice(0, 4096);
+  return routerRender(map.get(key) || map.get('ERROR_GENERIC'), { error_id: errorId || 'unknown' }).slice(0, 4096);
 }
 
 function routerStatusText(gatewayResult, context) {
@@ -36,13 +36,14 @@ function routerStatusText(gatewayResult, context) {
 function routerHelpText(config, context) {
   const rows = (config.CONFIG_LENH ?? []).filter(routerActive).sort((left, right) => Number(routerText(left.ordinal) || 0) - Number(routerText(right.ordinal) || 0));
   const messages = routerMessages({ response: { messages: {} } }, context);
-  const lines = [routerText(messages.get('HELP_HEADER') || 'Danh sách lệnh Kiểm kê bia V2:')];
+  const lines = [];
+  if (messages.get('HELP_HEADER')) lines.push(routerText(messages.get('HELP_HEADER')));
   for (const row of rows) {
     const command = routerText(row.command_text) || routerText(row.command_code);
     const syntax = routerText(row.syntax) || command;
-    lines.push(`${command} — ${routerText(row.description_vi) || 'Chưa có mô tả'}`);
+    lines.push(`${command} — ${routerText(row.description_vi)}`);
     lines.push(`  Cú pháp: ${syntax}`);
-    lines.push(`  Quyền: ${routerText(row.permission_code) || 'Không yêu cầu'}`);
+    lines.push(`  Quyền: ${routerText(row.permission_code)}`);
     lines.push(`  Ví dụ: ${routerText(row.example) || syntax}`);
   }
   return lines.join('\n');
@@ -115,7 +116,7 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
   const operationKeys = [normalized?.envelope?.operation_id, normalized?.envelope?.request_id, normalized?.envelope?.payload?.idempotency_key].map(routerText).filter(Boolean);
   if ((context.OPERATION ?? []).some((row) => ['COMMITTED', 'PREPARED'].includes(routerText(row.status).toUpperCase()) && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).some((value) => operationKeys.includes(value)))) {
     const messages = routerMessages(gatewayResult, context);
-    return { decision: { kind: 'DUPLICATE', write_plan: [] }, text: routerText(messages.get('ROUTER_DUPLICATE') || 'Yêu cầu đã được xử lý.') };
+    return { decision: { kind: 'DUPLICATE', write_plan: [] }, text: routerText(messages.get('ROUTER_DUPLICATE')) };
   }
   if (command === '/help') return { decision: { kind: 'HELP', write_plan: [] }, text: routerHelpText(config, context) };
   if (command === '/retry') {
@@ -123,8 +124,8 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
     const retryCommand = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === '/retry');
     const retryPermission = routerText(retryCommand?.permission_code);
     const user = (context.CONFIG_USER ?? []).find((row) => routerText(row.user_id) === routerText(normalized?.envelope?.actor_user_id));
-    const adminRole = (config.CONFIG_ROLE ?? []).filter(routerActive).map((row) => routerText(row.role_code));
-    const hasAdmin = retryPermission && user && routerActive(user) && (config.CONFIG_USER_ROLE ?? []).some((assignment) => routerActive(assignment) && routerText(assignment.user_id) === routerText(normalized?.envelope?.actor_user_id) && routerText(assignment.branch_id) === '*' && adminRole.includes(routerText(assignment.role_code)) && (config.CONFIG_ROLE_PERMISSION ?? []).some((mapping) => routerActive(mapping) && routerText(mapping.role_code) === routerText(assignment.role_code) && routerText(mapping.permission_code) === retryPermission));
+    const adminRole = new Set((config.CONFIG_ROLE ?? []).filter((row) => routerActive(row) && routerText(row.role_code) === 'ADMIN').map((row) => routerText(row.role_code)));
+    const hasAdmin = retryPermission && user && routerActive(user) && (config.CONFIG_USER_ROLE ?? []).some((assignment) => routerActive(assignment) && routerText(assignment.user_id) === routerText(normalized?.envelope?.actor_user_id) && routerText(assignment.branch_id) === '*' && adminRole.has(routerText(assignment.role_code)) && (config.CONFIG_ROLE_PERMISSION ?? []).some((mapping) => routerActive(mapping) && routerText(mapping.role_code) === routerText(assignment.role_code) && routerText(mapping.permission_code) === retryPermission));
     const error = (context.ERROR_BIA ?? []).find((row) => routerText(row.error_id) === errorId && routerText(row.status).toUpperCase() !== 'RESOLVED');
     if (!hasAdmin) return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', null, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${errorId || 'unknown'}-retry-denied`) };
     if (!error) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_FOUND', `err-${errorId || 'unknown'}-not-found`) };
@@ -132,7 +133,7 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
     const operationId = routerText(error.operation_id);
     const idempotencyKey = routerText(error.request_id) || operationId;
     const messages = routerMessages(gatewayResult, context);
-    return { decision: { kind: 'RETRY', retry: { error_id: errorId, operation_id: operationId, idempotency_key: idempotencyKey }, write_plan: [] }, text: routerText(messages.get('ROUTER_RETRY_ACCEPTED') || 'Đã tiếp nhận yêu cầu retry.') };
+    return { decision: { kind: 'RETRY', retry: { error_id: errorId, operation_id: operationId, idempotency_key: idempotencyKey }, write_plan: [] }, text: routerText(messages.get('ROUTER_RETRY_ACCEPTED')) };
   }
   const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === command);
   if (!commandRow) return { decision: base, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}`) };
@@ -175,6 +176,6 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
       },
       write_plan: [],
     },
-    text: routerText(messages.get('ROUTER_COMMAND_ACCEPTED') || 'Đã tiếp nhận lệnh.'),
+    text: routerText(messages.get('ROUTER_COMMAND_ACCEPTED')),
   };
 }

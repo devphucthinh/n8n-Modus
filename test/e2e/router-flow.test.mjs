@@ -66,6 +66,18 @@ test('does not append a duplicate access-denied event for a repeated update', ()
   assert.deepEqual(repeated.decision.write_plan, []);
 });
 
+test('does not let a non-ADMIN role retry an error through the router', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_USER.push({ user_id: '10003', display_name: 'Kiểm kê có quyền nhầm', branch_id: 'CN_HN', trang_thai: 'ACTIVE' });
+  tables.CONFIG_USER_ROLE.push({ user_role_id: 'ur-10003', user_id: '10003', role_code: 'KIEM_KE', branch_id: '*', effective_from: '2026-09-19T01:00:00.000Z', effective_to: '', trang_thai: 'ACTIVE' });
+  tables.CONFIG_ROLE_PERMISSION.push({ role_permission_id: 'rp-invalid-admin', role_code: 'KIEM_KE', permission_code: 'ADMIN_RETRY', trang_thai: 'ACTIVE' });
+
+  const result = runRouterFlow({ update: telegramStatusUpdate({ userId: '10003', text: '/retry err-42' }), tables, now: FIXED_NOW });
+
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
+});
+
 test('routes a configured callback token by command_code and preserves callback identity', () => {
   const tables = validConfigWithRouterTables();
   const update = {
