@@ -9,6 +9,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(root, 'workflows');
 const CORE_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA'];
 const ROUTER_SHEETS = ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'];
+const GOOGLE_SHEET_ID = '1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4';
+const WF01_WORKFLOW_ID = 'WEL83s9bZeB3ixxF';
+const WF02_WORKFLOW_ID = 'MoG6coBccYkIS0nK';
 const GOOGLE_CREDENTIAL = 'GOOGLE_SHEETS_KKB_V2';
 const TELEGRAM_CREDENTIAL = 'TELEGRAM_KKB_V2';
 
@@ -22,13 +25,18 @@ function node({ name, type, typeVersion = 2, parameters = {}, position = [0, 0],
 function googleSheetNode(name, sheetName, operation = 'read', extra = {}) {
   const parameters = {
     operation,
-    documentId: { __rl: true, value: 'PASTE_GOOGLE_SHEET_ID', mode: 'id' },
+    documentId: { __rl: true, value: GOOGLE_SHEET_ID, mode: 'id' },
     sheetName: { __rl: true, value: sheetName, mode: 'name' },
     options: { returnAll: true },
     ...extra,
   };
   const result = node({ name, type: 'n8n-nodes-base.googleSheets', typeVersion: 4.5, parameters, credentials: { googleSheetsOAuth2Api: { name: GOOGLE_CREDENTIAL } } });
-  if (operation === 'read') result.alwaysOutputData = true;
+  if (operation === 'read') {
+    // Read nodes can receive one item for every upstream row. Execute once
+    // prevents a linear chain of reads from multiplying Google Sheets calls.
+    result.alwaysOutputData = true;
+    result.executeOnce = true;
+  }
   return result;
 }
 
@@ -53,6 +61,21 @@ function link(connections, from, to, output = 0) {
   connections[from] ??= { main: [] };
   connections[from].main[output] ??= [];
   connections[from].main[output].push({ node: to, type: 'main', index: 0 });
+}
+
+function requestedSheetCondition(sheetName) {
+  return `={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.includes('${sheetName}')}}`;
+}
+
+function booleanIfParameters(leftValue) {
+  return {
+    conditions: {
+      options: { caseSensitive: true, leftValue: '', typeValidation: 'strict', version: 2 },
+      conditions: [{ leftValue, rightValue: true, operator: { type: 'boolean', operation: 'true' } }],
+      combinator: 'and',
+    },
+    options: {},
+  };
 }
 
 function baseWorkflow(name, nodes, connections) {
@@ -81,11 +104,19 @@ async function buildGatewayWorkflow() {
     item.position = pos(520, -360 + index * 90);
     return item;
   });
+  const routerSelectors = ROUTER_SHEETS.map((sheet, index) => node({
+    name: `Router sheet ${sheet} requested?`,
+    type: 'n8n-nodes-base.if',
+    typeVersion: 2.2,
+    parameters: booleanIfParameters(requestedSheetCondition(sheet)),
+    position: pos(760, 520 + index * 90),
+    notes: `Read ${sheet} only when required_sheet_names includes this sheet.`,
+  }));
   const assemble = node({ name: 'Assemble Config Tables', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await assembleCode() }, position: pos(560, 0) });
   const decision = node({ name: 'Evaluate Config Gateway', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await gatewayCode() }, position: pos(820, 0) });
-  const routerRequested = node({ name: 'Router tables requested?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { boolean: [{ value: "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.length > 0}}", operation: 'isTrue' }] } }, position: pos(520, 520), notes: 'Only read router tabs for commands that request them; /trangthai remains compatible with a core-only Sheet.' });
-  const branch = node({ name: 'Gateway OK?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { boolean: [{ value: '={{$json.ok}}', operation: 'isTrue' }] } }, position: pos(1080, 0) });
-  const writeRequired = node({ name: 'Write plan required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { number: [{ value1: '={{$json.write_plan.length}}', operation: 'larger', value2: 0 }] } }, position: pos(1330, -100) });
+  const routerRequested = node({ name: 'Router tables requested?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.length > 0}}"), position: pos(520, 520), notes: 'Only read router tabs for commands that request them; /trangthai remains compatible with a core-only Sheet.' });
+  const branch = node({ name: 'Gateway OK?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{$json.ok === true}}'), position: pos(1080, 0) });
+  const writeRequired = node({ name: 'Write plan required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{($json.write_plan?.length ?? 0) > 0}}'), position: pos(1330, -100) });
   const prepareOperationRow = node({ name: 'Prepare OPERATION row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(0) }, position: pos(1570, -100) });
   const prepareOperation = googleSheetNode('Prepare OPERATION', 'OPERATION', 'append', { columns: { mappingMode: 'autoMapInputData' } });
   prepareOperation.position = pos(1810, -100);
@@ -100,16 +131,28 @@ async function buildGatewayWorkflow() {
   commitOperation.position = pos(3250, -100);
   const returnStatus = node({ name: 'Return Gateway Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const result = $('Evaluate Config Gateway').first()?.json ?? {}; return [{ json: result }];" }, position: pos(3490, -100) });
   const errorInput = node({ name: 'Prepare Error Handler Input', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: errorInputCode() }, position: pos(1570, 180) });
-  const errorCall = node({ name: 'Call Error Handler', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF02_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(1810, 180), notes: 'V2 technical placeholder; select WF02_V2_ERROR_HANDLER after import.' });
-  const nodes = [trigger, ...reads, routerRequested, ...routerReads, assemble, decision, branch, writeRequired, prepareOperationRow, prepareOperation, prepareSnapshotRow, prepareSnapshot, commitSnapshotRow, commitSnapshot, commitOperationRow, commitOperation, returnStatus, errorInput, errorCall];
+  const errorCall = node({ name: 'Call Error Handler', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF02_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(1810, 180), notes: 'Bound to WF02_V2_ERROR_HANDLER in the current n8n Cloud project.' });
+  const nodes = [trigger, ...reads, routerRequested, ...routerSelectors, ...routerReads, assemble, decision, branch, writeRequired, prepareOperationRow, prepareOperation, prepareSnapshotRow, prepareSnapshot, commitSnapshotRow, commitSnapshot, commitOperationRow, commitOperation, returnStatus, errorInput, errorCall];
   const connections = {};
   link(connections, trigger.name, reads[0].name);
   for (let index = 0; index < reads.length - 1; index += 1) link(connections, reads[index].name, reads[index + 1].name);
   link(connections, reads.at(-1).name, routerRequested.name);
-  link(connections, routerRequested.name, routerReads[0].name, 0);
+  link(connections, routerRequested.name, routerSelectors[0].name, 0);
   link(connections, routerRequested.name, assemble.name, 1);
-  for (let index = 0; index < routerReads.length - 1; index += 1) link(connections, routerReads[index].name, routerReads[index + 1].name);
-  link(connections, routerReads.at(-1).name, assemble.name);
+  for (let index = 0; index < routerSelectors.length; index += 1) {
+    const selector = routerSelectors[index];
+    const read = routerReads[index];
+    const next = routerSelectors[index + 1]?.name;
+    if (next) {
+      link(connections, selector.name, read.name, 0);
+      link(connections, selector.name, next, 1);
+      link(connections, read.name, next);
+    } else {
+      link(connections, selector.name, read.name, 0);
+      link(connections, selector.name, assemble.name, 1);
+      link(connections, read.name, assemble.name);
+    }
+  }
   link(connections, assemble.name, decision.name);
   link(connections, decision.name, branch.name);
   link(connections, branch.name, writeRequired.name, 0);
@@ -135,7 +178,7 @@ async function buildErrorWorkflow() {
   const errorRow = node({ name: 'Project ERROR_BIA row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await errorRowCode() }, position: pos(300, -40) });
   const append = googleSheetNode('Append ERROR_BIA', 'ERROR_BIA', 'append', { columns: { mappingMode: 'autoMapInputData' } });
   append.position = pos(580, -40);
-  const replyCheck = node({ name: 'Reply target exists?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { string: [{ value1: '={{$json.reply_target.chat_id}}', operation: 'isNotEmpty' }] } }, position: pos(580, 200) });
+  const replyCheck = node({ name: 'Reply target exists?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{!!$json.reply_target?.chat_id}}'), position: pos(580, 200) });
   const send = node({ name: 'Send Safe Error Reply', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'message', operation: 'sendMessage', chatId: '={{$json.reply_target.chat_id}}', text: '={{$json.response.message_safe}}', additionalFields: { message_thread_id: '={{$json.reply_target.message_thread_id}}' } }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(860, 220) });
   const result = node({ name: 'Return Error Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: returnErrorCode() }, position: pos(1110, 80) });
   const nodes = [execute, trigger, normalize, errorRow, append, replyCheck, send, result];
@@ -154,22 +197,22 @@ async function buildErrorWorkflow() {
 async function buildRouterWorkflow() {
   const trigger = node({ name: 'Telegram Trigger', type: 'n8n-nodes-base.telegramTrigger', typeVersion: 1.2, parameters: { updates: ['message', 'edited_message', 'callback_query'] }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(0, 0) });
   const normalize = node({ name: 'Normalize Telegram Update', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await normalizeCode() }, position: pos(260, -80) });
-  const statusCheck = node({ name: 'Status command?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { string: [{ value1: '={{$json.command}}', operation: 'equals', value2: '/trangthai' }] } }, position: pos(520, -80) });
-  const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF01_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, -160), notes: 'V2 technical placeholder; select WF01_V2_CONFIG_GATEWAY after import.' });
-  const callUnsupportedGateway = node({ name: 'Call Config Gateway - Command Check', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: 'PASTE_WF01_WORKFLOW_ID', mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, 120), notes: 'Reads configured message templates through the Gateway without invoking a business worker.' });
+  const statusCheck = node({ name: 'Status command?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{$json.command === '/trangthai'}}"), position: pos(520, -80) });
+  const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF01_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, -160), notes: 'Bound to WF01_V2_CONFIG_GATEWAY in the current n8n Cloud project.' });
+  const callUnsupportedGateway = node({ name: 'Call Config Gateway - Command Check', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF01_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, 120), notes: 'Reads configured message templates through the current WF01 Config Gateway without invoking a business worker.' });
   const decision = node({ name: 'Router Decision', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await decisionCode() }, position: pos(1040, -40), notes: 'Reads Sheet-driven roles/permissions/topics/commands and writes denied-access events to EVENT_LOG.' });
-  const routeCheck = node({ name: 'Route reservation required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { string: [{ value1: '={{$json.decision.kind}}', operation: 'equals', value2: 'ROUTE' }] } }, position: pos(1240, -180), notes: 'Reserve the route idempotency key before acknowledging an accepted command.' });
+  const routeCheck = node({ name: 'Route reservation required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{$json.decision?.kind === 'ROUTE'}}"), position: pos(1240, -180), notes: 'Reserve the route idempotency key before acknowledging an accepted command.' });
   const projectReservation = node({ name: 'Project OPERATION reservation', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const reservation = $json.decision?.reservation; if (!reservation?.row) return []; return [{ json: reservation.row }];" }, position: pos(1460, -240) });
   const appendReservation = googleSheetNode('Append OPERATION reservation', 'OPERATION', 'appendOrUpdate', { columns: { mappingMode: 'autoMapInputData', matchingColumns: ['idempotency_key'] } });
   appendReservation.position = pos(1680, -240);
-  const auditCheck = node({ name: 'Router audit write required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { number: [{ value1: '={{$json.decision.write_plan.length}}', operation: 'larger', value2: 0 }] } }, position: pos(1260, 120) });
+  const auditCheck = node({ name: 'Router audit write required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{($json.decision?.write_plan?.length ?? 0) > 0}}'), position: pos(1260, 120) });
   const projectAudit = node({ name: 'Project EVENT_LOG row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const entry = $json.decision?.write_plan?.[0]; if (!entry) return []; return [{ json: entry.row }];" }, position: pos(1480, 120) });
   const appendAudit = googleSheetNode('Append EVENT_LOG', 'EVENT_LOG', 'appendOrUpdate', { columns: { mappingMode: 'autoMapInputData', matchingColumns: ['event_id'] } });
   appendAudit.position = pos(1700, 120);
   const restoreReply = node({ name: 'Restore Router Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const reply = $('Router Decision').first()?.json ?? {}; return [{ json: reply }];" }, position: pos(1920, 40), notes: 'Restores reply_target/text after Google Sheets replaces the item with the appended row.' });
   const splitReply = node({ name: 'Split Router Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const source = $json; const chars = Array.from(String(source.text ?? '')); const limit = 4096; if (chars.length === 0) return [{ json: { ...source, text: '' } }]; const chunks = []; for (let index = 0; index < chars.length; index += limit) chunks.push({ json: { ...source, text: chars.slice(index, index + limit).join('') } }); return chunks;" }, position: pos(2140, 40), notes: 'Telegram text limit is technical; preserve every /help line by sending multiple chunks.' });
   const send = node({ name: 'Send Telegram Reply', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'message', operation: 'sendMessage', chatId: '={{$json.reply_target.chat_id}}', text: '={{$json.text}}', additionalFields: { message_thread_id: '={{$json.reply_target.message_thread_id}}' } }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(2360, 40) });
-  const callbackCheck = node({ name: 'Callback query?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: { conditions: { boolean: [{ value: "={{!!$('Normalize Telegram Update').first()?.json?.callback?.id}}", operation: 'isTrue' }] } }, position: pos(1540, -40), notes: 'Only callback_query updates need answerQuery; normal messages skip this branch.' });
+  const callbackCheck = node({ name: 'Callback query?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{!!$('Normalize Telegram Update').first()?.json?.callback?.id}}"), position: pos(1540, -40), notes: 'Only callback_query updates need answerQuery; normal messages skip this branch.' });
   const callbackAnswer = node({ name: 'Answer Telegram Callback', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'callback', operation: 'answerQuery', queryId: "={{$('Normalize Telegram Update').first()?.json?.callback?.id}}", additionalFields: {} }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(1780, -40), notes: 'Acknowledges the inline-keyboard callback so Telegram clears its loading indicator.' });
   const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, decision, routeCheck, projectReservation, appendReservation, auditCheck, projectAudit, appendAudit, restoreReply, splitReply, send, callbackCheck, callbackAnswer];
   const connections = {};

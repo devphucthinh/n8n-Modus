@@ -55,12 +55,13 @@ Dữ liệu mẫu an toàn để bắt đầu:
 ## n8n import và liên kết
 
 1. Tạo hoặc chọn test copy của Google Sheet và hoàn thành sáu tab cấu hình cùng `EVENT_LOG` trước khi import WF01.
-2. Import theo thứ tự: `WF01_V2_CONFIG_GATEWAY.json` → `WF02_V2_ERROR_HANDLER.json` → `WF03_V2_TELEGRAM_ROUTER.json`.
+2. Import theo thứ tự: `WF02_V2_ERROR_HANDLER.json` → `WF01_V2_CONFIG_GATEWAY.json` → `WF03_V2_TELEGRAM_ROUTER.json`.
 3. Chọn credential đúng tên `GOOGLE_SHEETS_KKB_V2` cho Google Sheets và `TELEGRAM_KKB_V2` cho Telegram.
-4. Trong hai node `Call Config Gateway` của WF03, thay `PASTE_WF01_WORKFLOW_ID` bằng workflow ID thật của WF01. Không thay đổi logic bằng cách nhập command/permission trực tiếp vào Code node.
-5. Kiểm tra Spreadsheet ID placeholder ở các node Google Sheets của WF01; chỉ điền ID của file config đã được cấp quyền.
-6. Giữ cả ba workflow inactive trong lúc kiểm tra. Publish WF01 trước, sau đó publish WF03; chỉ active Telegram Router sau khi smoke test đạt.
-7. Chỉ một workflow được sở hữu Telegram Trigger của bot. WF02 chỉ là error handler và không được nhận Telegram Trigger.
+4. Bản export import-ready đã chứa live Sheet ID `1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4`; không thay bằng file `.xlsx` snapshot. Bản export tại thời điểm này trỏ WF03 → WF01 `WEL83s9bZeB3ixxF` và WF01 → WF02 `MoG6coBccYkIS0nK`.
+5. Giữ cả ba workflow inactive trong lúc kiểm tra. Publish WF02, rồi WF01, sau đó WF03; chỉ active Telegram Router sau khi smoke test đạt. Nếu môi trường tạo ID mới khi import, cập nhật các Execute Workflow node theo ID của workflow vừa import và ghi lại ID trong handoff.
+6. Chỉ một workflow được sở hữu Telegram Trigger của bot. WF02 chỉ là error handler và không được nhận Telegram Trigger.
+
+Mọi Google Sheets node có `operation=read` trong bản export phải có node property `executeOnce=true`; đây là bắt buộc để tránh fan-out khi các read node nằm trên cùng một chuỗi. Chi tiết và vòng kiểm thử nằm trong `docs/agents/google-sheets-read-performance.md`.
 
 ## Smoke test và bằng chứng cần ghi
 

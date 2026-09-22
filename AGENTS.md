@@ -16,6 +16,8 @@ Use the default Matt Pocock triage labels: `needs-triage`, `needs-info`, `ready-
 
 This is a single-context repository. Read `CONTEXT.md` and relevant files in `docs/adr/` before exploring or changing domain behavior. See `docs/agents/domain.md`.
 
+When a workflow is slow or hangs around Google Sheets reads, read `docs/agents/google-sheets-read-performance.md` before changing the workflow; it records the required one-execution read guard and verification loop.
+
 ## Repository-specific rules
 
 - Treat the live Google Sheet as the authoritative business configuration; `.xlsx` files downloaded from Google Sheets are snapshots for analysis and fixtures only.

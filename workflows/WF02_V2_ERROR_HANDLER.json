@@ -54,7 +54,7 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -86,13 +86,25 @@
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{$json.reply_target.chat_id}}",
-              "operation": "isNotEmpty"
+              "leftValue": "={{!!$json.reply_target?.chat_id}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "kkb-v2-reply-target-exists-",
       "name": "Reply target exists?",

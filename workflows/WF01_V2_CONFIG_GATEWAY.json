@@ -17,7 +17,7 @@
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -42,14 +42,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -74,14 +75,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -106,14 +108,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -138,14 +141,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -170,14 +174,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -202,14 +207,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -234,14 +240,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -266,14 +273,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -298,18 +306,31 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.length > 0}}",
-              "operation": "isTrue"
+              "leftValue": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.length > 0}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "kkb-v2-router-tables-requested-",
       "name": "Router tables requested?",
@@ -323,10 +344,241 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.includes('CONFIG_ROLE')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-router-sheet-config-role-requested-",
+      "name": "Router sheet CONFIG_ROLE requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        520
+      ],
+      "notes": "Read CONFIG_ROLE only when required_sheet_names includes this sheet."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.includes('CONFIG_PERMISSION')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-router-sheet-config-permission-requested-",
+      "name": "Router sheet CONFIG_PERMISSION requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        610
+      ],
+      "notes": "Read CONFIG_PERMISSION only when required_sheet_names includes this sheet."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.includes('CONFIG_USER_ROLE')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-router-sheet-config-user-role-requested-",
+      "name": "Router sheet CONFIG_USER_ROLE requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        700
+      ],
+      "notes": "Read CONFIG_USER_ROLE only when required_sheet_names includes this sheet."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.includes('CONFIG_ROLE_PERMISSION')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-router-sheet-config-role-permission-requested-",
+      "name": "Router sheet CONFIG_ROLE_PERMISSION requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        790
+      ],
+      "notes": "Read CONFIG_ROLE_PERMISSION only when required_sheet_names includes this sheet."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.includes('CONFIG_TOPIC')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-router-sheet-config-topic-requested-",
+      "name": "Router sheet CONFIG_TOPIC requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        880
+      ],
+      "notes": "Read CONFIG_TOPIC only when required_sheet_names includes this sheet."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.includes('CONFIG_LENH')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-router-sheet-config-lenh-requested-",
+      "name": "Router sheet CONFIG_LENH requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        970
+      ],
+      "notes": "Read CONFIG_LENH only when required_sheet_names includes this sheet."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.includes('EVENT_LOG')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-router-sheet-event-log-requested-",
+      "name": "Router sheet EVENT_LOG requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        1060
+      ],
+      "notes": "Read EVENT_LOG only when required_sheet_names includes this sheet."
+    },
+    {
+      "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -351,14 +603,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -383,14 +636,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -415,14 +669,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -447,14 +702,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -479,14 +735,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -511,14 +768,15 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -543,7 +801,8 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -574,13 +833,25 @@
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value": "={{$json.ok}}",
-              "operation": "isTrue"
+              "leftValue": "={{$json.ok === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "kkb-v2-gateway-ok-",
       "name": "Gateway OK?",
@@ -594,14 +865,25 @@
     {
       "parameters": {
         "conditions": {
-          "number": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{$json.write_plan.length}}",
-              "operation": "larger",
-              "value2": 0
+              "leftValue": "={{($json.write_plan?.length ?? 0) > 0}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "kkb-v2-write-plan-required-",
       "name": "Write plan required?",
@@ -630,7 +912,7 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -677,7 +959,7 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -724,7 +1006,7 @@
         "operation": "update",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -800,7 +1082,7 @@
         "operation": "update",
         "documentId": {
           "__rl": true,
-          "value": "PASTE_GOOGLE_SHEET_ID",
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
           "mode": "id"
         },
         "sheetName": {
@@ -908,7 +1190,7 @@
       "parameters": {
         "workflowId": {
           "__rl": true,
-          "value": "PASTE_WF02_WORKFLOW_ID",
+          "value": "MoG6coBccYkIS0nK",
           "mode": "id"
         },
         "options": {
@@ -923,7 +1205,7 @@
         1810,
         180
       ],
-      "notes": "V2 technical placeholder; select WF02_V2_ERROR_HANDLER after import."
+      "notes": "Bound to WF02_V2_ERROR_HANDLER in the current n8n Cloud project."
     }
   ],
   "connections": {
@@ -1041,7 +1323,7 @@
       "main": [
         [
           {
-            "node": "Read CONFIG_ROLE",
+            "node": "Router sheet CONFIG_ROLE requested?",
             "type": "main",
             "index": 0
           }
@@ -1055,11 +1337,47 @@
         ]
       ]
     },
+    "Router sheet CONFIG_ROLE requested?": {
+      "main": [
+        [
+          {
+            "node": "Read CONFIG_ROLE",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Router sheet CONFIG_PERMISSION requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Read CONFIG_ROLE": {
       "main": [
         [
           {
+            "node": "Router sheet CONFIG_PERMISSION requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router sheet CONFIG_PERMISSION requested?": {
+      "main": [
+        [
+          {
             "node": "Read CONFIG_PERMISSION",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Router sheet CONFIG_USER_ROLE requested?",
             "type": "main",
             "index": 0
           }
@@ -1070,7 +1388,25 @@
       "main": [
         [
           {
+            "node": "Router sheet CONFIG_USER_ROLE requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router sheet CONFIG_USER_ROLE requested?": {
+      "main": [
+        [
+          {
             "node": "Read CONFIG_USER_ROLE",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Router sheet CONFIG_ROLE_PERMISSION requested?",
             "type": "main",
             "index": 0
           }
@@ -1081,7 +1417,25 @@
       "main": [
         [
           {
+            "node": "Router sheet CONFIG_ROLE_PERMISSION requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router sheet CONFIG_ROLE_PERMISSION requested?": {
+      "main": [
+        [
+          {
             "node": "Read CONFIG_ROLE_PERMISSION",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Router sheet CONFIG_TOPIC requested?",
             "type": "main",
             "index": 0
           }
@@ -1092,7 +1446,25 @@
       "main": [
         [
           {
+            "node": "Router sheet CONFIG_TOPIC requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router sheet CONFIG_TOPIC requested?": {
+      "main": [
+        [
+          {
             "node": "Read CONFIG_TOPIC",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Router sheet CONFIG_LENH requested?",
             "type": "main",
             "index": 0
           }
@@ -1103,7 +1475,25 @@
       "main": [
         [
           {
+            "node": "Router sheet CONFIG_LENH requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router sheet CONFIG_LENH requested?": {
+      "main": [
+        [
+          {
             "node": "Read CONFIG_LENH",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Router sheet EVENT_LOG requested?",
             "type": "main",
             "index": 0
           }
@@ -1114,7 +1504,25 @@
       "main": [
         [
           {
+            "node": "Router sheet EVENT_LOG requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router sheet EVENT_LOG requested?": {
+      "main": [
+        [
+          {
             "node": "Read EVENT_LOG",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Assemble Config Tables",
             "type": "main",
             "index": 0
           }

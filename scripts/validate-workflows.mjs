@@ -5,6 +5,12 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(root, 'workflows');
 const expected = ['WF01_V2_CONFIG_GATEWAY.json', 'WF02_V2_ERROR_HANDLER.json', 'WF03_V2_TELEGRAM_ROUTER.json'];
+const googleSheetId = '1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4';
+const workflowTargets = new Map([
+  ['Call Error Handler', 'MoG6coBccYkIS0nK'],
+  ['Call Config Gateway', 'WEL83s9bZeB3ixxF'],
+  ['Call Config Gateway - Command Check', 'WEL83s9bZeB3ixxF'],
+]);
 const secretPattern = /\b\d{8,}:[A-Za-z0-9_-]{20,}\b|AIza[0-9A-Za-z_-]{20,}|Bearer\s+[A-Za-z0-9._-]+/;
 const errors = [];
 
@@ -30,8 +36,20 @@ for (const filename of files) {
     for (const node of workflow.nodes) {
       if (node.type === 'n8n-nodes-base.googleSheets') {
         if (node.credentials?.googleSheetsOAuth2Api?.name !== 'GOOGLE_SHEETS_KKB_V2') errors.push(`${filename}: Google Sheets credential mismatch`);
+        if (node.parameters?.documentId?.value !== googleSheetId) errors.push(`${filename}: Google Sheets node ${node.name} has an unexpected document ID`);
+        if (node.parameters?.operation === 'read' && node.executeOnce !== true) errors.push(`${filename}: Google Sheets read node ${node.name} must execute once to prevent row fan-out`);
         if (JSON.stringify(node.parameters).includes('PASTE_TELEGRAM_BOT_TOKEN')) errors.push(`${filename}: Telegram token placeholder is forbidden`);
       }
+      if (node.type === 'n8n-nodes-base.if') {
+        const conditions = node.parameters?.conditions;
+        if (conditions?.boolean || conditions?.string || conditions?.number) errors.push(`${filename}: IF node ${node.name} uses a legacy conditions schema`);
+        if (conditions?.combinator !== 'and' || !Array.isArray(conditions?.conditions) || conditions.conditions.length === 0) errors.push(`${filename}: IF node ${node.name} has no n8n v2 conditions`);
+        for (const condition of conditions?.conditions ?? []) {
+          if (typeof condition.leftValue !== 'string' || condition.leftValue.trim() === '') errors.push(`${filename}: IF node ${node.name} has an empty leftValue`);
+          if (!condition.operator || typeof condition.operator !== 'object') errors.push(`${filename}: IF node ${node.name} has no n8n v2 operator`);
+        }
+      }
+      if (workflowTargets.has(node.name) && node.parameters?.workflowId?.value !== workflowTargets.get(node.name)) errors.push(`${filename}: Execute Workflow node ${node.name} has an unexpected workflow ID`);
       if (node.type === 'n8n-nodes-base.telegram' || node.type === 'n8n-nodes-base.telegramTrigger') {
         if (node.credentials?.telegramApi?.name !== 'TELEGRAM_KKB_V2') errors.push(`${filename}: Telegram credential mismatch`);
       }
