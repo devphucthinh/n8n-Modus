@@ -105,6 +105,17 @@ test('keeps live configuration reads behind the Config Gateway', async () => {
   assert.deepEqual(gateway.connections['Execute Workflow Trigger'].main[0].map((target) => target.node), ['Read CONFIG_SCHEMA']);
 });
 
+test('does not dereference optional router reads that were skipped', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const assemble = gateway.nodes.find((node) => node.name === 'Assemble Config Tables');
+  const evaluate = gateway.nodes.find((node) => node.name === 'Evaluate Config Gateway');
+  assert.match(assemble.parameters.jsCode, /try\s*\{/);
+  assert.match(assemble.parameters.jsCode, /catch\s*\{/);
+  assert.match(evaluate.parameters.jsCode, /\$input\.first\(\)\?\.json/);
+  assert.match(evaluate.parameters.jsCode, /assembled\.tables/);
+});
+
 test('WF03 carries router table requests and keeps command policy Sheet-driven', async () => {
   const workflows = await loadGeneratedWorkflows();
   const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');

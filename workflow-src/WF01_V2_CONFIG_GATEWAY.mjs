@@ -7,10 +7,17 @@ ${await sourceFile('src/contracts/workflow-envelope.mjs')}
 ${await sourceFile('src/config-gateway/sha256.mjs')}
 ${await sourceFile('src/config-gateway/evaluate-config.mjs')}
 
-const triggerInput = $('Execute Workflow Trigger').first()?.json ?? {};
-const readRows = (name) => $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0);
-const tables = Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'].map((name) => [name, readRows(name)]));
-const envelope = normalizeEnvelope(triggerInput.envelope ?? triggerInput);
+const assembled = $input.first()?.json ?? {};
+const triggerInput = assembled.envelope ? assembled : $('Execute Workflow Trigger').first()?.json ?? {};
+const readRows = (name) => {
+  try {
+    return $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0);
+  } catch {
+    return [];
+  }
+};
+const tables = assembled.tables ?? Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'].map((name) => [name, readRows(name)]));
+const envelope = normalizeEnvelope(assembled.envelope ?? triggerInput.envelope ?? triggerInput);
 const decision = evaluateConfigGateway({ envelope, tables, now: new Date().toISOString() });
 return [{ json: decision }];
 `);
@@ -19,7 +26,13 @@ return [{ json: decision }];
 export async function assembleCode() {
   return codeNode(`
 const triggerInput = $('Execute Workflow Trigger').first()?.json ?? {};
-const readRows = (name) => $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0);
+const readRows = (name) => {
+  try {
+    return $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0);
+  } catch {
+    return [];
+  }
+};
 const tables = Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'].map((name) => [name, readRows(name)]));
 return [{ json: { envelope: triggerInput.envelope ?? triggerInput, tables } }];
 `);

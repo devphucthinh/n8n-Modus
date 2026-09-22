@@ -33,8 +33,14 @@ each downstream node was executed once per upstream row. The generated V2
 artifacts now set the n8n node property `executeOnce=true` on all 16 WF01
 read nodes, while preserving `returnAll=true` and the live Sheet ID. The
 source builder and validator enforce this contract, and `npm run verify`
-passes 73 tests. This is a build-time regression guard; it does not replace
+passes 74 tests. This is a build-time regression guard; it does not replace
 the required live `/help` and `/trangthai` smoke cases below.
+
+The first post-import live run exposed a second edge case: `/trangthai` does
+not request router tables, so `Read CONFIG_ROLE` is intentionally skipped.
+The generated WF01 now guards optional `$items('Read ...')` access and passes
+the assembled `tables` object into evaluation. The regression suite covers
+this path (`does not dereference optional router reads that were skipped`).
 
 ## Required configuration gate
 
