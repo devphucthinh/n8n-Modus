@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateConfigGateway } from '../../src/config-gateway/evaluate-config.mjs';
+import { evaluateConfigGateway, expandSnapshotPayload } from '../../src/config-gateway/evaluate-config.mjs';
 import { CORE_SHEET_DEFINITIONS } from '../../src/contracts/core-sheet-schema.mjs';
 import { envelope, FIXED_NOW, validConfig, validConfigWithRouterTables } from '../fixtures/config/valid-config.mjs';
 
@@ -139,4 +139,26 @@ test('reuses a legacy snapshot when only Google Sheets row metadata differs', ()
   assert.equal(result.ok, true);
   assert.deepEqual(result.write_plan, []);
   assert.equal(result.response.config_snapshot_id, legacySnapshotId);
+});
+
+test('stores an oversized snapshot as a reversible columnar payload below the Sheets cell limit', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_THONG_BAO.push(...Array.from({ length: 300 }, (_, index) => ({
+    message_key: `EXTRA_MESSAGE_${index}`,
+    message_text: 'Same configured message text',
+    locale: 'vi-VN',
+    trang_thai: 'ACTIVE',
+  })));
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+  assert.equal(result.ok, true);
+
+  const snapshotRow = result.write_plan.find((step) => step.sheet === 'CONFIG_SNAPSHOT' && step.action === 'APPEND').row;
+  assert.ok(result.diagnostics.normalized_config_json.length > 50000);
+  assert.ok(snapshotRow.normalized_config_json.length < 50000);
+
+  const stored = JSON.parse(snapshotRow.normalized_config_json);
+  assert.equal(stored.__snapshot_format, 'columnar-v1');
+  assert.equal(stored.__fingerprint, result.response.fingerprint);
+  assert.deepEqual(expandSnapshotPayload(stored), JSON.parse(result.diagnostics.normalized_config_json));
 });

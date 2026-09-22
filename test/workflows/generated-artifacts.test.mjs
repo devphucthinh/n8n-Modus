@@ -195,6 +195,39 @@ test('generated Config Gateway keeps Google Sheets metadata out of snapshot cell
   assert.ok(snapshotPayload.length < 50000);
 });
 
+test('generated Config Gateway packs oversized snapshots below the Sheets cell limit', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const evaluator = gateway.nodes.find((node) => node.name === 'Evaluate Config Gateway');
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_THONG_BAO.push(...Array.from({ length: 300 }, (_, index) => ({
+    message_key: `EXTRA_MESSAGE_${index}`,
+    message_text: 'Same configured message text',
+    locale: 'vi-VN',
+    trang_thai: 'ACTIVE',
+  })));
+  const sandbox = {
+    $input: { first: () => ({ json: { envelope: { ...envelope, payload: { command: '/kiemke', intent: 'START_OPERATION' } }, tables } }) },
+    $items: () => [],
+    $: () => ({ first: () => ({ json: {} }) }),
+    structuredClone: undefined,
+    TextEncoder,
+  };
+
+  vm.createContext(sandbox);
+  const output = await vm.runInContext(`(async () => { ${evaluator.parameters.jsCode}\n})()`, sandbox, { timeout: 1000 });
+  const result = output[0].json;
+  const snapshotPayload = result.write_plan[1].row.normalized_config_json;
+  const stored = JSON.parse(snapshotPayload);
+  const messageIndex = stored.sheets.CONFIG_THONG_BAO.columns.indexOf('message_text');
+
+  assert.ok(result.diagnostics.normalized_config_json.length > 50000);
+  assert.ok(snapshotPayload.length < 50000);
+  assert.equal(stored.__snapshot_format, 'columnar-v1');
+  assert.equal(stored.__fingerprint, result.response.fingerprint);
+  assert.ok(stored.sheets.CONFIG_THONG_BAO.rows.some((row) => row[messageIndex] === 'Same configured message text'));
+});
+
 test('WF03 carries router table requests and keeps command policy Sheet-driven', async () => {
   const workflows = await loadGeneratedWorkflows();
   const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');

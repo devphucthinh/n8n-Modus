@@ -4,6 +4,8 @@ import { sha256 } from './sha256.mjs';
 const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', ...ROUTER_SHEET_NAMES];
 const SCHEMA_DATA_TYPES = new Set(['STRING', 'INTEGER', 'NUMBER', 'BOOLEAN', 'DATE', 'DATETIME']);
 const ACTIVE = 'ACTIVE';
+const SNAPSHOT_CELL_MAX_CHARS = 49000;
+const SNAPSHOT_FORMAT = 'columnar-v1';
 
 const asText = (value) => (value == null ? '' : String(value).trim());
 const isBlank = (value) => asText(value) === '';
@@ -240,6 +242,40 @@ function normalizeConfigTables(tables) {
   }));
 }
 
+function snapshotStorageJson(normalizedConfigJson, fingerprint) {
+  if (normalizedConfigJson.length <= SNAPSHOT_CELL_MAX_CHARS) return normalizedConfigJson;
+  let normalized;
+  try {
+    normalized = JSON.parse(normalizedConfigJson);
+  } catch {
+    return null;
+  }
+
+  const packed = canonicalJson({
+    __snapshot_format: SNAPSHOT_FORMAT,
+    __scope: Object.keys(normalized).sort().join('|'),
+    __fingerprint: fingerprint,
+    sheets: Object.fromEntries(Object.entries(normalized).map(([sheetName, rows]) => {
+      const columns = [...new Set((Array.isArray(rows) ? rows : []).flatMap((row) => Object.keys(row ?? {})))].sort();
+      return [sheetName, {
+        columns,
+        rows: (Array.isArray(rows) ? rows : []).map((row) => columns.map((column) => row?.[column] ?? '')),
+      }];
+    })),
+  });
+
+  return packed.length <= SNAPSHOT_CELL_MAX_CHARS ? packed : null;
+}
+
+function expandSnapshotPayload(value) {
+  if (!value || typeof value !== 'object' || value.__snapshot_format !== SNAPSHOT_FORMAT) return value;
+  return Object.fromEntries(Object.entries(value.sheets ?? {}).map(([sheetName, sheet]) => {
+    const columns = Array.isArray(sheet?.columns) ? sheet.columns.map(asText) : [];
+    const rows = Array.isArray(sheet?.rows) ? sheet.rows : [];
+    return [sheetName, rows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row?.[index] ?? ''])))];
+  }));
+}
+
 function activeVersionRow(tables) {
   return (tableRows(tables, 'CONFIG_VERSION') ?? []).find((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE') ?? null;
 }
@@ -413,6 +449,14 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     }
   }
 
+  const storedNormalizedConfigJson = snapshotStorageJson(normalizedConfigJson, fingerprint);
+  if (!storedNormalizedConfigJson) {
+    return decorateFailure(makeFailure('CONFIG_SNAPSHOT_TOO_LARGE', 'Normalized configuration snapshot exceeds the Google Sheets cell limit', normalizedEnvelope, {
+      snapshot_size_chars: normalizedConfigJson.length,
+      max_cell_chars: SNAPSHOT_CELL_MAX_CHARS,
+    }));
+  }
+
   const snapshotId = `cfg-${configVersion.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint.slice(0, 16)}`;
   const operationId = asText(envelope.operation_id) || `op-${snapshotId}`;
   const requestId = asText(envelope.request_id);
@@ -434,7 +478,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     config_version: configVersion,
     schema_version: schemaVersion,
     fingerprint,
-    normalized_config_json: normalizedConfigJson,
+    normalized_config_json: storedNormalizedConfigJson,
     operation_id: operationId,
     status: 'PREPARED',
     created_at: now,
@@ -448,8 +492,12 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
       { sheet: 'CONFIG_SNAPSHOT', action: 'UPDATE', match: { config_snapshot_id: snapshotId }, patch: { status: 'COMMITTED' } },
       { sheet: 'OPERATION', action: 'UPDATE', match: { operation_id: operationId }, patch: { status: 'COMMITTED', actual_row_count: '1', updated_at: now } },
     ],
-    diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: false },
+    diagnostics: {
+      normalized_config_json: normalizedConfigJson,
+      snapshot_storage_format: storedNormalizedConfigJson === normalizedConfigJson ? 'json-v1' : SNAPSHOT_FORMAT,
+      reused_snapshot: false,
+    },
   };
 }
 
-export { canonicalJson };
+export { canonicalJson, expandSnapshotPayload };
