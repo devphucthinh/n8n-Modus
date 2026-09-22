@@ -25,6 +25,17 @@ not count as `/help` smoke evidence. The regression fix narrows `/help` to
 `CONFIG_LENH` instead of reading every optional router/audit sheet. Re-run the
 live matrix after WF01 is published and the Cloud workspace reconnects.
 
+## Google Sheets read fan-out fix
+
+The same pre-fix executions also showed the core read chain growing from
+roughly 119 to 238 items. The cause was a linear chain of `returnAll` reads:
+each downstream node was executed once per upstream row. The generated V2
+artifacts now set the n8n node property `executeOnce=true` on all 16 WF01
+read nodes, while preserving `returnAll=true` and the live Sheet ID. The
+source builder and validator enforce this contract, and `npm run verify`
+passes 73 tests. This is a build-time regression guard; it does not replace
+the required live `/help` and `/trangthai` smoke cases below.
+
 ## Required configuration gate
 
 - [ ] `CONFIG_ROLE` exists with the intended active roles.
