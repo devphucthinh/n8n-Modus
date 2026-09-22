@@ -30,12 +30,13 @@
 
 ## Checklist cấu hình n8n
 
-1. Import theo thứ tự: `WF02_V2_ERROR_HANDLER.json`, `WF01_V2_CONFIG_GATEWAY.json`, sau đó `WF03_V2_TELEGRAM_ROUTER.json` (import WF02 trước để placeholder Error Handler có đích hợp lệ; WF01 trước Router để Router gọi được Gateway).
+1. Import theo thứ tự: `WF02_V2_ERROR_HANDLER.json`, `WF01_V2_CONFIG_GATEWAY.json`, sau đó `WF03_V2_TELEGRAM_ROUTER.json` (WF02 là dependency của WF01; WF01 là dependency của WF03).
 2. Chọn credential Google Sheets hiện có và đặt tên credential hiển thị là `GOOGLE_SHEETS_KKB_V2`; chọn credential Telegram là `TELEGRAM_KKB_V2`.
-3. Thay `PASTE_GOOGLE_SHEET_ID` bằng ID của live Google Sheet trong các Google Sheets node.
-4. Thay `PASTE_WF01_WORKFLOW_ID` và `PASTE_WF02_WORKFLOW_ID` bằng workflow ID sau khi import; không nhúng credential ID/token vào JSON.
+3. Bản import-ready đã nhúng live Sheet ID `1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4`; không cần điền thủ công. Chỉ cần đảm bảo credential có quyền với file đó.
+4. Bản import-ready hiện trỏ WF03 → WF01 `WEL83s9bZeB3ixxF` và WF01 → WF02 `MoG6coBccYkIS0nK`; nếu n8n tạo ID mới khi import, cập nhật Execute Workflow node theo ID mới và ghi lại trong handoff.
 5. Để cả ba workflow ở trạng thái inactive cho tới khi smoke test xong.
 6. Bật Error Workflow handling để lỗi kỹ thuật đi qua `WF02_V2_ERROR_HANDLER`; không gửi stack trace hoặc token vào Telegram/Sheet.
+7. Các Google Sheets node `read` phải giữ node property `executeOnce=true`; không đổi `returnAll` thành `false` để chữa fan-out.
 
 ## Smoke test trước khi bật
 

@@ -1,6 +1,7 @@
 const clone = (value) => {
-  if (value === undefined) return undefined;
-  return structuredClone(value);
+  if (value === undefined || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(clone);
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, clone(child)]));
 };
 
 /**
