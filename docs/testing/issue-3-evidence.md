@@ -10,6 +10,21 @@ This is a fill-in record for the live n8n Cloud smoke test. It deliberately cont
 - WF01 execution: `<execution reference>`
 - WF03 execution: `<execution reference>`
 
+## Hanging execution diagnostic (pre-fix)
+
+On the live Cloud workspace, three WF03 executions were observed active at
+the same time and were stopped manually to release the execution slots:
+
+- `#42` — canceled after approximately 5m52s.
+- `#44` — canceled after approximately 2m55s.
+- `#46` — canceled after approximately 2m26s.
+
+The exact Telegram command for those historical executions was not verified
+from the execution payload, so these references are diagnostic only and do
+not count as `/help` smoke evidence. The regression fix narrows `/help` to
+`CONFIG_LENH` instead of reading every optional router/audit sheet. Re-run the
+live matrix after WF01 is published and the Cloud workspace reconnects.
+
 ## Required configuration gate
 
 - [ ] `CONFIG_ROLE` exists with the intended active roles.
