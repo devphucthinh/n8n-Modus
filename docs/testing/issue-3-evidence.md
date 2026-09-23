@@ -67,6 +67,18 @@ this path (`does not dereference optional router reads that were skipped`).
 | Same callback ID with a new `update_id` | No second route reservation; Telegram callback is answered | `<two execution refs + callback answer ref>` | `PENDING` |
 | `/retry <error_id>` | Only configured admin can retry a retryable error and original keys are reused | `<WF03 execution ref>` | `PENDING` |
 
+## Sanitized observations — 2026-09-23
+
+These observations are not a complete release gate. The inspected n8n workflow is published; isolation from production was not established. No new Telegram command was sent during this review. Personal identifiers, chat/thread IDs, message IDs, sheet IDs, and configuration payloads are intentionally omitted.
+
+| Case | Evidence observed | Result |
+|---|---|---|
+| `/help` | WF03 execution `#141` succeeded; input normalized `/HELP` to `/help`. User-provided Telegram capture in this task shows the configured command catalog. | `PARTIAL` — exact active/inactive catalog reconciliation was not captured from the same execution. |
+| Valid `/kiemke` | WF03 execution `#152` succeeded; route-reservation and Telegram-reply nodes ran. | `PARTIAL` — the persisted OPERATION row and resolved branch/topic/worker fields were not independently inspected. |
+| `/trangthai` active user; unknown/inactive user; wrong topic/permission; duplicate update; callback replay; `/retry` | No qualifying execution evidence was verified in this review. | `PENDING` |
+
+Local verification at commit `9fa4f1a`: `npm run verify` passed (3 workflows validated; 113 tests passed), and `git diff --check` passed. Code review still has unresolved Standards findings: P2, the hard-coded `ADMIN` retry-role check versus ADR 0021; P3, duplicated effective-date-window validation in authorization paths. Do not merge until the P2 is resolved and the P3 is dispositioned. These local checks do not substitute for the remaining live smoke cases.
+
 ## Release gate
 
 Do not merge PR #21 or close issue #3 while any required case is `PENDING`/`FAIL`. Attach the completed evidence to the PR or issue without adding secret values.
