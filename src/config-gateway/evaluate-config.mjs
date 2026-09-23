@@ -300,6 +300,7 @@ function committedPredecessor(tables) {
   return (tableRows(tables, 'CONFIG_SNAPSHOT') ?? [])
     .filter((row) => {
       if (asText(row.status).toUpperCase() !== 'COMMITTED') return false;
+      if (!committedOperations.has(asText(row.operation_id))) return false;
       const operationType = committedOperations.get(asText(row.operation_id));
       return operationType !== 'READ_STATUS' && operationType !== 'READ_HELP' && operationType !== 'COMMAND_NOT_AVAILABLE';
     })

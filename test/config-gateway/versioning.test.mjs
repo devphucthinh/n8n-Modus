@@ -69,6 +69,25 @@ test('ignores PREPARED snapshots when finding the accepted predecessor', () => {
   assert.equal(result.write_plan.length, 4);
 });
 
+test('ignores committed snapshots without a committed operation', () => {
+  const baseline = evaluateConfigGateway({ envelope: writeEnvelope, tables: validConfig(), now: FIXED_NOW });
+  const tables = validConfig();
+  tables.CONFIG_SNAPSHOT = [completeRow('CONFIG_SNAPSHOT', {
+    config_snapshot_id: 'cfg-v1-orphan',
+    config_version: 'v1',
+    schema_version: '1.0',
+    fingerprint: baseline.response.fingerprint,
+    normalized_config_json: baseline.diagnostics.normalized_config_json,
+    operation_id: 'op-orphan',
+    status: 'COMMITTED',
+    created_at: FIXED_NOW,
+  })];
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.diagnostics.reused_snapshot, false);
+  assert.notEqual(result.response.config_snapshot_id, 'cfg-v1-orphan');
+});
+
 test('keeps status reads read-only', () => {
   const result = evaluateConfigGateway({ envelope, tables: validConfig(), now: FIXED_NOW });
   assert.equal(result.ok, true);
