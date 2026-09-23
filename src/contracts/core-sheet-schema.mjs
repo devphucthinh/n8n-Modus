@@ -26,5 +26,9 @@ export const AUDIT_SHEET_DEFINITIONS = Object.freeze({
   EVENT_LOG: ['event_id', 'event_type', 'request_id', 'operation_id', 'actor_user_id', 'branch_id', 'topic_type', 'command', 'outcome', 'error_code', 'created_at', 'trang_thai'],
 });
 export const AUDIT_SHEET_NAMES = Object.freeze(Object.keys(AUDIT_SHEET_DEFINITIONS));
-export const ALL_SHEET_DEFINITIONS = Object.freeze({ ...CORE_SHEET_DEFINITIONS, ...ROUTER_SHEET_DEFINITIONS, ...AUDIT_SHEET_DEFINITIONS });
+export const DISPATCHER_SHEET_DEFINITIONS = Object.freeze({
+  CONFIG_LICH: ['schedule_id', 'job_code', 'branch_id', 'local_time', 'timezone', 'days_of_week', 'grace_window_minutes', 'retry_limit', 'retry_delay_minutes', 'worker_workflow', 'enabled', 'trang_thai'],
+});
+export const DISPATCHER_SHEET_NAMES = Object.freeze(Object.keys(DISPATCHER_SHEET_DEFINITIONS));
+export const ALL_SHEET_DEFINITIONS = Object.freeze({ ...CORE_SHEET_DEFINITIONS, ...ROUTER_SHEET_DEFINITIONS, ...AUDIT_SHEET_DEFINITIONS, ...DISPATCHER_SHEET_DEFINITIONS });
 export const ALL_SHEET_NAMES = Object.freeze(Object.keys(ALL_SHEET_DEFINITIONS));

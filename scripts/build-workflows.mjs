@@ -4,11 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { gatewayCode, assembleCode, planRowCode, errorInputCode } from '../workflow-src/WF01_V2_CONFIG_GATEWAY.mjs';
 import { errorCode, errorRowCode, returnErrorCode } from '../workflow-src/WF02_V2_ERROR_HANDLER.mjs';
 import { normalizeCode, decisionCode } from '../workflow-src/WF03_V2_TELEGRAM_ROUTER.mjs';
+import { dispatcherCode } from '../workflow-src/WF04_V2_DISPATCHER.mjs';
+import { inventorySessionCode } from '../workflow-src/WF05_V2_MO_PHIEN_KIEM_KE.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(root, 'workflows');
 const CORE_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA'];
 const ROUTER_SHEETS = ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'];
+const DISPATCHER_SHEETS = ['CONFIG_LICH'];
+const OPTIONAL_SHEETS = [...ROUTER_SHEETS, ...DISPATCHER_SHEETS];
 const GOOGLE_SHEET_ID = '1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4';
 const WF01_WORKFLOW_ID = 'WEL83s9bZeB3ixxF';
 const WF02_WORKFLOW_ID = 'MoG6coBccYkIS0nK';
@@ -99,12 +103,12 @@ async function buildGatewayWorkflow() {
     item.position = pos(260, -360 + index * 90);
     return item;
   });
-  const routerReads = ROUTER_SHEETS.map((sheet, index) => {
+  const routerReads = OPTIONAL_SHEETS.map((sheet, index) => {
     const item = googleSheetNode(`Read ${sheet}`, sheet);
     item.position = pos(520, -360 + index * 90);
     return item;
   });
-  const routerSelectors = ROUTER_SHEETS.map((sheet, index) => node({
+  const routerSelectors = OPTIONAL_SHEETS.map((sheet, index) => node({
     name: `Router sheet ${sheet} requested?`,
     type: 'n8n-nodes-base.if',
     typeVersion: 2.2,
@@ -239,7 +243,92 @@ async function buildRouterWorkflow() {
   return baseWorkflow('WF03_V2_TELEGRAM_ROUTER', nodes, connections);
 }
 
-const workflows = [await buildGatewayWorkflow(), await buildErrorWorkflow(), await buildRouterWorkflow()];
+async function buildDispatcherWorkflow() {
+  const schedule = node({ name: 'Technical Tick 10 Minutes', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, parameters: { rule: { interval: [{ field: 'minutes', minutesInterval: 10 }] } }, position: pos(0, 0), notes: 'Technical wake-up only. Business schedule is read from CONFIG_LICH through WF01.' });
+  const execute = executeTrigger('Execute Dispatcher Trigger');
+  const request = node({ name: 'Prepare Dispatcher Gateway Request', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const input = $input.first()?.json ?? {}; const envelope = input.envelope ?? {}; const executionId = typeof $execution !== 'undefined' && $execution.id ? $execution.id : String(Date.now()); return [{json: { envelope: { request_id: envelope.request_id || 'dispatch-' + executionId, operation_id: envelope.operation_id || 'dispatch-' + executionId, event_type: 'SCHEDULED_JOB', actor_user_id: 'SYSTEM', branch_id: null, business_date: null, config_version: null, payload: { intent: 'READ_STATUS', required_sheet_names: ['CONFIG_LICH', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_THONG_BAO'] } } }}];" }, position: pos(260, 0) });
+  const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF01_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(520, 0), notes: 'Requests CONFIG_LICH and receives the immutable config_snapshot_id.' });
+  const readHistory = googleSheetNode('Read DISPATCH_HISTORY', 'DISPATCH_HISTORY');
+  readHistory.position = pos(780, 0);
+  const readSessions = googleSheetNode('Read PHIEN_KIEM_KE', 'PHIEN_KIEM_KE');
+  readSessions.position = pos(1040, 0);
+  const readHeartbeat = googleSheetNode('Read HEARTBEAT', 'HEARTBEAT');
+  readHeartbeat.position = pos(1300, 0);
+  const decide = node({ name: 'Decide Dispatcher Actions', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await dispatcherCode() }, position: pos(1560, 0) });
+  const heartbeatCheck = node({ name: 'Heartbeat action?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{$json.kind === 'HEARTBEAT'}}"), position: pos(1560, -160) });
+  const appendHeartbeat = googleSheetNode('Append HEARTBEAT', 'HEARTBEAT', 'append', { columns: { mappingMode: 'autoMapInputData' } });
+  appendHeartbeat.position = pos(1820, -260);
+  const noticeCheck = node({ name: 'Critical or recovery notice?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{!!$json.notice}}"), position: pos(2080, -260) });
+  const prepareNotice = node({ name: 'Prepare Dispatcher Notice', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const row = $input.first()?.json ?? {}; const gateway = $('Call Config Gateway').first()?.json ?? {}; const code = 'DISPATCHER_' + String(row.notice || '').toUpperCase(); const messages = gateway.response?.messages || {}; const branch = (gateway.response?.data?.config_tables?.CONFIG_BRANCH || []).find((item) => item.owner_chat_id); return [{json: { error: { error_code: code, error_class: row.notice === 'CRITICAL' ? 'CRITICAL' : 'OPERATIONAL', retryable: false, message_safe: messages[code] || code, operation_id: row.heartbeat_id, request_id: row.heartbeat_id, workflow: 'WF04_V2_DISPATCHER', node: 'Heartbeat', config_version: gateway.response?.config_version || null }, context: { workflow: 'WF04_V2_DISPATCHER', operation_id: row.heartbeat_id, request_id: row.heartbeat_id }, reply_target: branch ? { chat_id: branch.owner_chat_id } : null }}];" }, position: pos(2340, -260) });
+  const callError = node({ name: 'Call Error Handler', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF02_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(2600, -260), notes: 'Critical and recovery notices use configured safe messages and Error Handler audit/notification policy.' });
+  const dispatchCheck = node({ name: 'Dispatch action?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{$json.kind === 'DISPATCH'}}"), position: pos(1820, -40) });
+  const recordOutcome = googleSheetNode('Record Dispatch Outcome', 'DISPATCH_HISTORY', 'appendOrUpdate', { columns: { mappingMode: 'defineBelow', value: { dispatch_key: '={{$json.dispatch_key}}', schedule_id: '={{$json.schedule_id}}', job_code: '={{$json.job_code}}', branch_id: '={{$json.branch_id}}', business_date: '={{$json.business_date}}', status: '={{$json.kind === \'WARNING\' ? \'WARNING\' : \'SKIPPED\'}}', skip_reason: '={{$json.reason}}', config_snapshot_id: '={{$json.config_snapshot_id}}', updated_at: '={{$now}}' }, matchingColumns: ['dispatch_key'] } });
+  recordOutcome.position = pos(2080, 100);
+  const claim = googleSheetNode('Claim DISPATCH_HISTORY', 'DISPATCH_HISTORY', 'appendOrUpdate', { columns: { mappingMode: 'defineBelow', value: { dispatch_key: '={{$json.dispatch_key}}', schedule_id: '={{$json.schedule_id}}', job_code: '={{$json.job_code}}', branch_id: '={{$json.branch_id}}', business_date: '={{$json.business_date}}', scheduled_at: '={{$json.scheduled_at}}', status: 'CLAIMED', attempt_count: '={{$json.attempt_count}}', config_snapshot_id: '={{$json.config_snapshot_id}}', updated_at: '={{$now}}' }, matchingColumns: ['dispatch_key'] } });
+  claim.position = pos(2080, -40);
+  const worker = node({ name: 'Execute Configured Worker', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: '={{$json.worker_workflow}}', options: { waitForSubWorkflow: true } }, position: pos(2340, -40), notes: 'Worker workflow ID comes from CONFIG_LICH; this node does not select a business worker by hard-coded schedule.' });
+  worker.continueOnFail = true;
+  const finalize = node({ name: 'Finalize Dispatch History', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const claim = $('Claim DISPATCH_HISTORY').first()?.json ?? {}; const worker = $input.first()?.json ?? {}; const failed = worker.ok !== true; const updatedAt = new Date().toISOString(); const retryAt = failed && Number(claim.retry_delay_minutes) > 0 ? new Date(Date.parse(updatedAt) + Number(claim.retry_delay_minutes) * 60000).toISOString() : ''; return [{json: { ...claim, status: failed ? 'FAILED' : 'SUCCESS', failure_count: failed ? String(Number(claim.failure_count || 0) + 1) : '0', last_error_code: failed ? String(worker.error_code || 'WORKER_FAILED') : '', retry_at: retryAt, updated_at: updatedAt }}];" }, position: pos(2860, -40) });
+  const finalizeWrite = googleSheetNode('Update DISPATCH_HISTORY', 'DISPATCH_HISTORY', 'update', { columns: { mappingMode: 'defineBelow', value: { dispatch_key: '={{$json.dispatch_key}}', status: '={{$json.status}}', failure_count: '={{$json.failure_count}}', last_error_code: '={{$json.last_error_code}}', retry_at: '={{$json.retry_at}}', updated_at: '={{$json.updated_at}}' }, matchingColumns: ['dispatch_key'] } });
+  finalizeWrite.position = pos(3120, -40);
+  const result = node({ name: 'Return Dispatcher Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "return $input.all();" }, position: pos(3380, -40) });
+  const nodes = [schedule, execute, request, callGateway, readHistory, readSessions, readHeartbeat, decide, heartbeatCheck, appendHeartbeat, noticeCheck, prepareNotice, callError, dispatchCheck, recordOutcome, claim, worker, finalize, finalizeWrite, result];
+  const connections = {};
+  link(connections, schedule.name, request.name);
+  link(connections, execute.name, request.name);
+  link(connections, request.name, callGateway.name);
+  link(connections, callGateway.name, readHistory.name);
+  link(connections, readHistory.name, readSessions.name);
+  link(connections, readSessions.name, readHeartbeat.name);
+  link(connections, readHeartbeat.name, decide.name);
+  link(connections, decide.name, heartbeatCheck.name);
+  link(connections, heartbeatCheck.name, appendHeartbeat.name, 0);
+  link(connections, heartbeatCheck.name, dispatchCheck.name, 1);
+  link(connections, appendHeartbeat.name, noticeCheck.name);
+  link(connections, noticeCheck.name, prepareNotice.name, 0);
+  link(connections, noticeCheck.name, result.name, 1);
+  link(connections, prepareNotice.name, callError.name);
+  link(connections, callError.name, result.name);
+  link(connections, dispatchCheck.name, claim.name, 0);
+  link(connections, dispatchCheck.name, recordOutcome.name, 1);
+  link(connections, recordOutcome.name, result.name);
+  link(connections, claim.name, worker.name);
+  link(connections, worker.name, finalize.name);
+  link(connections, finalize.name, finalizeWrite.name);
+  link(connections, finalizeWrite.name, result.name);
+  return baseWorkflow('WF04_V2_DISPATCHER', nodes, connections);
+}
+
+async function buildInventorySessionWorkflow() {
+  const execute = executeTrigger();
+  const request = node({ name: 'Prepare Session Gateway Request', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const input = $input.first()?.json ?? {}; const incoming = input.envelope ?? input; return [{json: { envelope: { ...incoming, event_type: 'SCHEDULED_JOB', payload: { ...(incoming.payload || {}), required_sheet_names: ['CONFIG_TOPIC'], intent: 'READ_STATUS', dispatch_key: input.dispatch_key || incoming.payload?.dispatch_key, config_snapshot_id: input.config_snapshot_id || incoming.payload?.config_snapshot_id } } }}];" }, position: pos(260, 0) });
+  const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF01_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(520, 0), notes: 'Reads the configured KIEM_KE topic and preserves the dispatcher snapshot context.' });
+  const readSessions = googleSheetNode('Read PHIEN_KIEM_KE', 'PHIEN_KIEM_KE');
+  readSessions.position = pos(780, 0);
+  const decide = node({ name: 'Open or Reuse Inventory Session', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await inventorySessionCode() }, position: pos(1040, 0) });
+  const prepareSession = node({ name: 'Prepare PHIEN_KIEM_KE row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const result = $('Open or Reuse Inventory Session').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'PHIEN_KIEM_KE'); return entry?.row ? [{json: entry.row}] : [];" }, position: pos(1300, -100) });
+  const prepareAudit = node({ name: 'Prepare EVENT_LOG row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const result = $('Open or Reuse Inventory Session').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'EVENT_LOG'); return entry?.row ? [{json: entry.row}] : [];" }, position: pos(1300, 100) });
+  const sessionWrite = googleSheetNode('Write PHIEN_KIEM_KE', 'PHIEN_KIEM_KE', 'appendOrUpdate', { columns: { mappingMode: 'autoMapInputData', matchingColumns: ['session_id'] } });
+  sessionWrite.position = pos(1560, -100);
+  const auditWrite = googleSheetNode('Write EVENT_LOG', 'EVENT_LOG', 'appendOrUpdate', { columns: { mappingMode: 'autoMapInputData', matchingColumns: ['event_id'] } });
+  auditWrite.position = pos(1560, 100);
+  const result = node({ name: 'Return Inventory Session Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "return $('Open or Reuse Inventory Session').all();" }, position: pos(1820, 0) });
+  const nodes = [execute, request, callGateway, readSessions, decide, prepareSession, prepareAudit, sessionWrite, auditWrite, result];
+  const connections = {};
+  link(connections, execute.name, request.name);
+  link(connections, request.name, callGateway.name);
+  link(connections, callGateway.name, readSessions.name);
+  link(connections, readSessions.name, decide.name);
+  link(connections, decide.name, prepareSession.name);
+  link(connections, decide.name, prepareAudit.name);
+  link(connections, prepareSession.name, sessionWrite.name);
+  link(connections, prepareAudit.name, auditWrite.name);
+  link(connections, sessionWrite.name, result.name);
+  link(connections, auditWrite.name, result.name);
+  return baseWorkflow('WF05_V2_MO_PHIEN_KIEM_KE', nodes, connections);
+}
+
+const workflows = [await buildGatewayWorkflow(), await buildErrorWorkflow(), await buildRouterWorkflow(), await buildDispatcherWorkflow(), await buildInventorySessionWorkflow()];
 await mkdir(outputDir, { recursive: true });
 for (const workflow of workflows) {
   const filename = `${workflow.name}.json`;

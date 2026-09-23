@@ -1,0 +1,325 @@
+{
+  "name": "WF05_V2_MO_PHIEN_KIEM_KE",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "kkb-v2-execute-workflow-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {}; const incoming = input.envelope ?? input; return [{json: { envelope: { ...incoming, event_type: 'SCHEDULED_JOB', payload: { ...(incoming.payload || {}), required_sheet_names: ['CONFIG_TOPIC'], intent: 'READ_STATUS', dispatch_key: input.dispatch_key || incoming.payload?.dispatch_key, config_snapshot_id: input.config_snapshot_id || incoming.payload?.config_snapshot_id } } }}];"
+      },
+      "id": "kkb-v2-prepare-session-gateway-request",
+      "name": "Prepare Session Gateway Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "WEL83s9bZeB3ixxF",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-call-config-gateway",
+      "name": "Call Config Gateway",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        520,
+        0
+      ],
+      "notes": "Reads the configured KIEM_KE topic and preserves the dispatcher snapshot context."
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-phien-kiem-ke",
+      "name": "Read PHIEN_KIEM_KE",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst active = (row) => ['ACTIVE', 'OPEN', 'IN_PROGRESS'].includes(asText(row?.status).toUpperCase());\nconst stableId = (prefix, value) => `${prefix}-${asText(value).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n\nfunction auditRow({ envelope, sessionId, outcome, now }) {\n  return {\n    event_id: stableId('evt-session', envelope.payload?.dispatch_key || envelope.operation_id),\n    event_type: 'INVENTORY_SESSION_DISPATCH',\n    request_id: asText(envelope.request_id),\n    operation_id: asText(envelope.operation_id),\n    actor_user_id: asText(envelope.actor_user_id) || 'SYSTEM',\n    branch_id: asText(envelope.branch_id),\n    topic_type: 'KIEM_KE',\n    command: '/kiemke',\n    outcome,\n    error_code: '',\n    created_at: now,\n    trang_thai: 'ACTIVE',\n  };\n}\n\nfunction openOrReuseInventorySession({ envelope, configSnapshotId, topics = [], sessions = [], now = new Date().toISOString() } = {}) {\n  if (!envelope?.request_id || !envelope?.operation_id || !envelope?.branch_id || !envelope?.business_date || !configSnapshotId) {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_CONTEXT_INVALID', write_plan: [] };\n  }\n  const existing = (sessions ?? []).find((row) => asText(row.branch_id) === asText(envelope.branch_id) && active(row));\n  if (existing) {\n    return {\n      ok: true,\n      status: 'REUSED',\n      session: { ...existing },\n      write_plan: [{ sheet: 'EVENT_LOG', action: 'APPEND_OR_UPDATE', match: { event_id: stableId('evt-session', envelope.payload?.dispatch_key || envelope.operation_id) }, row: auditRow({ envelope, sessionId: asText(existing.session_id), outcome: 'REUSED_ACTIVE_SESSION', now }) }],\n    };\n  }\n  const topic = (topics ?? []).find((row) => asText(row.branch_id) === asText(envelope.branch_id) && asText(row.topic_type).toUpperCase() === 'KIEM_KE' && asText(row.trang_thai).toUpperCase() === 'ACTIVE');\n  if (!topic) return { ok: false, status: 'ERROR', error_code: 'INVENTORY_TOPIC_NOT_CONFIGURED', write_plan: [] };\n  const dispatchKey = asText(envelope.payload?.dispatch_key) || asText(envelope.operation_id);\n  const sessionId = stableId('session', dispatchKey);\n  const session = {\n    session_id: sessionId,\n    branch_id: asText(envelope.branch_id),\n    business_date: asText(envelope.business_date),\n    config_snapshot_id: asText(configSnapshotId),\n    topic_id: asText(topic.topic_id),\n    chat_id: asText(topic.chat_id),\n    message_thread_id: asText(topic.message_thread_id),\n    dispatch_key: dispatchKey,\n    status: 'ACTIVE',\n    created_at: now,\n    updated_at: now,\n    topic_action: 'REUSE_TOPIC',\n  };\n  return {\n    ok: true,\n    status: 'OPENED',\n    session,\n    write_plan: [\n      { sheet: 'PHIEN_KIEM_KE', action: 'APPEND_OR_UPDATE', match: { session_id: sessionId }, row: session },\n      { sheet: 'EVENT_LOG', action: 'APPEND_OR_UPDATE', match: { event_id: stableId('evt-session', dispatchKey) }, row: auditRow({ envelope, sessionId, outcome: 'OPENED', now }) },\n    ],\n  };\n}\n\nconst trigger = $('Execute Workflow Trigger').first()?.json ?? {};\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst envelope = trigger.envelope ?? trigger;\nconst topics = gateway.response?.data?.config_tables?.CONFIG_TOPIC ?? [];\nconst snapshotId = envelope.payload?.config_snapshot_id || gateway.response?.config_snapshot_id || null;\nconst rows = (() => { try { return $items('Read PHIEN_KIEM_KE').map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); } catch { return []; } })();\nconst result = openOrReuseInventorySession({ envelope, configSnapshotId: snapshotId, topics, sessions: rows, now: new Date().toISOString() });\nreturn [{ json: result }];"
+      },
+      "id": "kkb-v2-open-or-reuse-inventory-session",
+      "name": "Open or Reuse Inventory Session",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Open or Reuse Inventory Session').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'PHIEN_KIEM_KE'); return entry?.row ? [{json: entry.row}] : [];"
+      },
+      "id": "kkb-v2-prepare-phien-kiem-ke-row",
+      "name": "Prepare PHIEN_KIEM_KE row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Open or Reuse Inventory Session').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'EVENT_LOG'); return entry?.row ? [{json: entry.row}] : [];"
+      },
+      "id": "kkb-v2-prepare-event-log-row",
+      "name": "Prepare EVENT_LOG row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "session_id"
+          ]
+        }
+      },
+      "id": "kkb-v2-write-phien-kiem-ke",
+      "name": "Write PHIEN_KIEM_KE",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1560,
+        -100
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "EVENT_LOG",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "event_id"
+          ]
+        }
+      },
+      "id": "kkb-v2-write-event-log",
+      "name": "Write EVENT_LOG",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1560,
+        100
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $('Open or Reuse Inventory Session').all();"
+      },
+      "id": "kkb-v2-return-inventory-session-result",
+      "name": "Return Inventory Session Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Gateway Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Session Gateway Request": {
+      "main": [
+        [
+          {
+            "node": "Call Config Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Config Gateway": {
+      "main": [
+        [
+          {
+            "node": "Read PHIEN_KIEM_KE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PHIEN_KIEM_KE": {
+      "main": [
+        [
+          {
+            "node": "Open or Reuse Inventory Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open or Reuse Inventory Session": {
+      "main": [
+        [
+          {
+            "node": "Prepare PHIEN_KIEM_KE row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare EVENT_LOG row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PHIEN_KIEM_KE row": {
+      "main": [
+        [
+          {
+            "node": "Write PHIEN_KIEM_KE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare EVENT_LOG row": {
+      "main": [
+        [
+          {
+            "node": "Write EVENT_LOG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write PHIEN_KIEM_KE": {
+      "main": [
+        [
+          {
+            "node": "Return Inventory Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write EVENT_LOG": {
+      "main": [
+        [
+          {
+            "node": "Return Inventory Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "kkb-v2-wf05-v2-mo-phien-kiem-ke-version",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "tags": []
+}

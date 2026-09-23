@@ -94,7 +94,7 @@ test('keeps live configuration reads behind the Config Gateway', async () => {
   assert.equal(router.nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheets' && node.parameters.operation === 'read').length, 0);
   const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
   const reads = gateway.nodes.filter((node) => node.name.startsWith('Read '));
-  assert.equal(reads.length, 16);
+  assert.equal(reads.length, 17);
   assert.ok(gateway.nodes.some((node) => node.name === 'Router tables requested?'));
   for (const sheet of ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG']) {
     const selector = gateway.nodes.find((node) => node.name === `Router sheet ${sheet} requested?`);
@@ -103,8 +103,9 @@ test('keeps live configuration reads behind the Config Gateway', async () => {
   }
   assert.ok(reads.every((node) => node.alwaysOutputData === true));
   assert.ok(reads.every((node) => node.executeOnce === true));
-  assert.deepEqual(gateway.connections['Router sheet EVENT_LOG requested?'].main[1].map((target) => target.node), ['Assemble Config Tables']);
-  assert.deepEqual(gateway.connections['Read EVENT_LOG'].main[0].map((target) => target.node), ['Assemble Config Tables']);
+  assert.deepEqual(gateway.connections['Router sheet CONFIG_LICH requested?'].main[1].map((target) => target.node), ['Assemble Config Tables']);
+  assert.deepEqual(gateway.connections['Read CONFIG_LICH'].main[0].map((target) => target.node), ['Assemble Config Tables']);
+  assert.ok(gateway.nodes.some((node) => node.name === 'Router sheet CONFIG_LICH requested?'));
   assert.deepEqual(gateway.connections['Execute Workflow Trigger'].main[0].map((target) => target.node), ['Read CONFIG_SCHEMA']);
 });
 

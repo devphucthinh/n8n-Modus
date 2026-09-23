@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES } from '../src/contracts/core-sheet-schema.mjs';
+import { CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, DISPATCHER_SHEET_DEFINITIONS, DISPATCHER_SHEET_NAMES } from '../src/contracts/core-sheet-schema.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(root, 'outputs', 'issue-2');
@@ -9,10 +9,12 @@ const outputPath = path.join(outputDir, 'KKB_V2_CONFIG_BASELINE.xlsx');
 const artifactRoot = process.env.KKB_ARTIFACT_TOOL_ROOT || 'C:/Users/TD-996/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/@oai/artifact-tool';
 const { Workbook, SpreadsheetFile } = await import(pathToFileURL(path.join(artifactRoot, 'dist', 'artifact_tool.mjs')).href);
 
-const header = (sheetName) => CORE_SHEET_DEFINITIONS[sheetName];
+const SHEET_DEFINITIONS = { ...CORE_SHEET_DEFINITIONS, ...DISPATCHER_SHEET_DEFINITIONS };
+const SHEET_NAMES = [...CORE_SHEET_NAMES, ...DISPATCHER_SHEET_NAMES];
+const header = (sheetName) => SHEET_DEFINITIONS[sheetName];
 const row = (sheetName, values) => header(sheetName).map((column) => values[column] ?? '');
 const schemas = {
-  CONFIG_SCHEMA: CORE_SHEET_NAMES.flatMap((sheetName) => header(sheetName).map((columnName, ordinal) => row('CONFIG_SCHEMA', {
+    CONFIG_SCHEMA: SHEET_NAMES.flatMap((sheetName) => header(sheetName).map((columnName, ordinal) => row('CONFIG_SCHEMA', {
     schema_rule_id: `rule-${sheetName}-${columnName}`,
     schema_version: '1.0',
     sheet_name: sheetName,
@@ -50,6 +52,7 @@ const schemas = {
   CONFIG_SNAPSHOT: [],
   OPERATION: [],
   ERROR_BIA: [],
+  CONFIG_LICH: [],
 };
 
 function styleSheet(sheet, sheetName, rowCount, columnCount) {
@@ -102,7 +105,7 @@ function addValidation(sheet, sheetName) {
 }
 
 const workbook = Workbook.create();
-for (const sheetName of CORE_SHEET_NAMES) {
+for (const sheetName of SHEET_NAMES) {
   const sheet = workbook.worksheets.add(sheetName);
   const columns = header(sheetName);
   const values = [columns, ...schemas[sheetName]];
