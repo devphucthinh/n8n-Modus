@@ -118,10 +118,10 @@ async function buildGatewayWorkflow() {
   const branch = node({ name: 'Gateway OK?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{$json.ok === true}}'), position: pos(1080, 0) });
   const writeRequired = node({ name: 'Write plan required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{($json.write_plan?.length ?? 0) > 0}}'), position: pos(1330, -100) });
   const prepareOperationRow = node({ name: 'Prepare OPERATION row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(0) }, position: pos(1570, -100) });
-  const prepareOperation = googleSheetNode('Prepare OPERATION', 'OPERATION', 'append', { columns: { mappingMode: 'autoMapInputData' } });
+  const prepareOperation = googleSheetNode('Prepare OPERATION', 'OPERATION', 'appendOrUpdate', { columns: { mappingMode: 'autoMapInputData', matchingColumns: ['operation_id'] } });
   prepareOperation.position = pos(1810, -100);
   const prepareSnapshotRow = node({ name: 'Prepare CONFIG_SNAPSHOT row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(1) }, position: pos(2050, -100) });
-  const prepareSnapshot = googleSheetNode('Prepare CONFIG_SNAPSHOT', 'CONFIG_SNAPSHOT', 'append', { columns: { mappingMode: 'autoMapInputData' } });
+  const prepareSnapshot = googleSheetNode('Prepare CONFIG_SNAPSHOT', 'CONFIG_SNAPSHOT', 'appendOrUpdate', { columns: { mappingMode: 'autoMapInputData', matchingColumns: ['config_snapshot_id'] } });
   prepareSnapshot.position = pos(2290, -100);
   const commitSnapshotRow = node({ name: 'Commit CONFIG_SNAPSHOT row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: planRowCode(2) }, position: pos(2530, -100) });
   const commitSnapshot = googleSheetUpdateNode('Commit CONFIG_SNAPSHOT', 'CONFIG_SNAPSHOT', 'config_snapshot_id');

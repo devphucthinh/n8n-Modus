@@ -19,3 +19,22 @@ test('unknown and inactive users receive the same opaque denial', () => {
   assert.equal(unknown.allowed, false);
   assert.equal(unknown.denial_code, 'USER_NOT_AUTHORIZED');
 });
+
+test('denies a business command whose catalog row has no permission', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_LENH.push({
+    command_code: 'CMD_PUBLIC_INVALID',
+    command_text: '/publicinvalid',
+    syntax: '/publicinvalid',
+    description_vi: 'Lệnh nghiệp vụ thiếu quyền',
+    permission_code: '',
+    topic_type: 'KIEM_KE',
+    worker_workflow: 'WF05_V2_MO_PHIEN_KIEM_KE',
+    example: '/publicinvalid',
+    ordinal: '60',
+    trang_thai: 'ACTIVE',
+  });
+  const result = authorizeCommand({ actorUserId: '10001', command: '/publicinvalid', topic: topicFor('KIEM_KE'), tables, now: FIXED_NOW });
+  assert.equal(result.allowed, false);
+  assert.equal(result.denial_code, 'USER_NOT_AUTHORIZED');
+});

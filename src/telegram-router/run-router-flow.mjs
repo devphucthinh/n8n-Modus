@@ -1,11 +1,9 @@
 import { evaluateConfigGateway } from '../config-gateway/evaluate-config.mjs';
-import { AUDIT_SHEET_NAMES, ROUTER_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
 import { normalizeTelegramUpdate } from './normalize-status-update.mjs';
 import { decideRouterResponse } from './decide-router-response.mjs';
+import { requiredSheetNames } from './required-sheet-names.mjs';
 
 const asText = (value) => (value == null ? '' : String(value).trim());
-const routerTables = Object.freeze([...ROUTER_SHEET_NAMES, ...AUDIT_SHEET_NAMES]);
-
 function reply(normalized, text) {
   return {
     chat_id: normalized.reply_target.chat_id,
@@ -22,7 +20,7 @@ export function runRouterFlow({ update, tables, now = new Date().toISOString() }
       && [row.command_code, row.command_text].map((value) => asText(value).toLowerCase()).includes(callbackToken.toLowerCase()))?.command_text
     : null;
   const command = asText(callbackCommand) || normalized.command;
-  const required = command === '/trangthai' ? [] : routerTables;
+  const required = requiredSheetNames(command);
   const intent = command === '/trangthai' ? 'READ_STATUS' : command === '/help' ? 'READ_HELP' : command === '/retry' ? 'MANUAL_RETRY' : 'ROUTE_COMMAND';
   const envelope = {
     ...normalized.envelope,

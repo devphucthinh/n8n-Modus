@@ -83,6 +83,8 @@ test('exports stage and target immutable ledger rows', async () => {
   assert.deepEqual(operationCommit.parameters.columns.matchingColumns, ['operation_id']);
   assert.deepEqual(operationCommit.parameters.columns.schema.map((column) => column.id), ['operation_id', 'status', 'actual_row_count', 'updated_at']);
   assert.ok(gateway.nodes.some((node) => node.name === 'Prepare CONFIG_SNAPSHOT row'));
+  assert.equal(gateway.nodes.find((node) => node.name === 'Prepare OPERATION')?.parameters.operation, 'appendOrUpdate');
+  assert.equal(gateway.nodes.find((node) => node.name === 'Prepare CONFIG_SNAPSHOT')?.parameters.operation, 'appendOrUpdate');
 
   const errorWorkflow = workflows.find((workflow) => workflow.name === 'WF02_V2_ERROR_HANDLER');
   assert.ok(errorWorkflow.nodes.some((node) => node.name === 'Project ERROR_BIA row'));
@@ -237,7 +239,8 @@ test('WF03 carries router table requests and keeps command policy Sheet-driven',
   assert.match(decision.parameters.jsCode, /CONFIG_LENH/);
   const normalize = router.nodes.find((node) => node.name === 'Normalize Telegram Update');
   assert.ok(normalize.parameters.jsCode.includes('requiredSheetNames(normalized.command)'));
-  assert.ok(normalize.parameters.jsCode.includes("if (normalized === '/help') return ['CONFIG_LENH', 'CONFIG_PERMISSION']"));
+  assert.ok(normalize.parameters.jsCode.includes('const HELP_ROUTER_SHEETS = Object.freeze(['));
+  assert.ok(normalize.parameters.jsCode.includes("if (normalized === '/help') return [...HELP_ROUTER_SHEETS]"));
   assert.doesNotMatch(JSON.stringify(router), /WF05_V2_MO_PHIEN_KIEM_KE|KIEM_KE_WRITE/);
   assert.ok(router.nodes.some((node) => node.name === 'Append EVENT_LOG'));
   assert.ok(router.nodes.some((node) => node.name === 'Append OPERATION reservation'));

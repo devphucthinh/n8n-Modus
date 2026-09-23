@@ -5,8 +5,11 @@ function withinEffectiveWindow(row, now) {
   const current = Date.parse(now);
   const from = asText(row.effective_from);
   const to = asText(row.effective_to);
-  return (!from || Number.isNaN(current) || Number.isNaN(Date.parse(from)) || current >= Date.parse(from))
-    && (!to || Number.isNaN(current) || Number.isNaN(Date.parse(to)) || current <= Date.parse(to));
+  if (from && Number.isNaN(Date.parse(from))) return false;
+  if (to && Number.isNaN(Date.parse(to))) return false;
+  if ((from || to) && Number.isNaN(current)) return false;
+  return (!from || current >= Date.parse(from))
+    && (!to || current <= Date.parse(to));
 }
 
 const denied = () => ({ allowed: false, denial_code: 'USER_NOT_AUTHORIZED', permission_code: null, branch_id: null, role_codes: [] });
@@ -22,7 +25,10 @@ export function authorizeCommand({ actorUserId, command, topic = null, tables, n
   const commandRow = (tables?.CONFIG_LENH ?? []).find((row) => active(row) && asText(row.command_text).toLowerCase() === commandText);
   if (!commandRow) return denied();
   const permissionCode = asText(commandRow.permission_code);
-  if (!permissionCode) return { allowed: true, denial_code: null, permission_code: null, branch_id: asText(topic?.branch_id) || asText(user.branch_id) || null, role_codes: [] };
+  if (!permissionCode) {
+    if (!['/help', '/trangthai'].includes(commandText)) return denied();
+    return { allowed: true, denial_code: null, permission_code: null, branch_id: asText(topic?.branch_id) || asText(user.branch_id) || null, role_codes: [] };
+  }
   if (!topic || !active(topic)) return denied();
   const topicBranch = asText(topic.branch_id);
   const permissions = new Set((tables?.CONFIG_PERMISSION ?? []).filter(active).map((row) => asText(row.permission_code)));
@@ -47,6 +53,8 @@ export function hasPermission({ actorUserId, permissionCode, tables, now, topic 
   const userId = asText(actorUserId);
   const user = (tables?.CONFIG_USER ?? []).find((row) => asText(row.user_id) === userId);
   if (!user || !active(user)) return false;
+  const permissions = new Set((tables?.CONFIG_PERMISSION ?? []).filter(active).map((row) => asText(row.permission_code)));
+  if (!permissions.has(asText(permissionCode))) return false;
   const roles = new Set((tables?.CONFIG_ROLE ?? []).filter(active).map((row) => asText(row.role_code)));
   const mapping = (tables?.CONFIG_ROLE_PERMISSION ?? []).filter((row) => active(row) && asText(row.permission_code) === asText(permissionCode));
   return (tables?.CONFIG_USER_ROLE ?? [])

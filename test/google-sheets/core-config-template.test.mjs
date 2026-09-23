@@ -21,3 +21,23 @@ test('template exposes the operational audit sheet separately from router config
     assert.deepEqual(AUDIT_CONFIG_TEMPLATE[sheetName].rows, []);
   }
 });
+
+test('template provides every protocol message required by the gateway', () => {
+  const required = [
+    'STATUS_HEADER',
+    'STATUS_GATEWAY_HEALTH_LINE',
+    'STATUS_CONFIG_LINE',
+    'STATUS_BRANCH_COUNT_LINE',
+    'STATUS_BRANCH_LINE',
+    'STATUS_MAINTENANCE_LINE',
+    'ERROR_GENERIC',
+    'USER_NOT_ACTIVE',
+    'COMMAND_NOT_AVAILABLE',
+    'HELP_HEADER',
+    'ROUTER_COMMAND_ACCEPTED',
+    'ROUTER_RETRY_ACCEPTED',
+    'ROUTER_DUPLICATE',
+  ];
+  const actual = new Set(CORE_CONFIG_TEMPLATE.CONFIG_THONG_BAO.rows.map((row) => row.message_key));
+  for (const key of required) assert.ok(actual.has(key), `missing ${key}`);
+});

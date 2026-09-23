@@ -46,6 +46,22 @@ test('uses the configured acknowledgement and rejects a repeated committed opera
   assert.equal(repeated.decision.write_plan.length, 0);
 });
 
+test('returns a safe error instead of an empty reply when a router message is missing', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_THONG_BAO = tables.CONFIG_THONG_BAO.filter((row) => row.message_key !== 'ROUTER_COMMAND_ACCEPTED');
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'DENY');
+  assert.match(result.reply.text, /error_id|err-/i);
+});
+
+test('returns a safe error instead of an empty reply when a router message is blank', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_THONG_BAO.find((row) => row.message_key === 'ROUTER_COMMAND_ACCEPTED').message_text = '';
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'DENY');
+  assert.match(result.reply.text, /error_id|CONFIG_MESSAGE_MISSING|err-/i);
+});
+
 test('records an opaque access-denied event for an active user without permission', () => {
   const tables = validConfigWithRouterTables();
   tables.CONFIG_USER_ROLE = [];
@@ -76,6 +92,76 @@ test('does not let a non-ADMIN role retry an error through the router', () => {
 
   assert.equal(result.decision.kind, 'DENY');
   assert.equal(result.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
+});
+
+test('denies retry for an expired configured global role assignment', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_USER_ROLE.find((row) => row.user_id === 'admin-1').effective_to = '2026-09-18T00:00:00.000Z';
+  const result = runRouterFlow({ update: telegramStatusUpdate({ userId: 'admin-1', text: '/retry err-42' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
+});
+
+test('denies retry when the configured retry permission is inactive', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_PERMISSION.find((row) => row.permission_code === 'ADMIN_RETRY').trang_thai = 'INACTIVE';
+  const result = runRouterFlow({ update: telegramStatusUpdate({ userId: 'admin-1', text: '/retry err-42' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
+});
+
+test('help works when only its requested router catalog is available', () => {
+  const tables = validConfigWithRouterTables();
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/help' }), tables, now: FIXED_NOW });
+  assert.equal(result.gateway.ok, true);
+  assert.equal(result.decision.kind, 'HELP');
+  assert.match(result.reply.text, /\/kiemke/);
+  assert.doesNotMatch(result.reply.text, /\/nhaphang/);
+});
+
+test('help omits commands whose topic branch is outside the actor assignment', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_USER_ROLE.push({ user_role_id: 'ur-cross-branch', user_id: '10001', role_code: 'NHAP_HANG', branch_id: 'CN_OTHER', effective_from: FIXED_NOW, effective_to: '', trang_thai: 'ACTIVE' });
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/help' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'HELP');
+  assert.match(result.reply.text, /\/kiemke/);
+  assert.doesNotMatch(result.reply.text, /\/nhaphang/);
+});
+
+test('does not expose or route a topic whose branch is inactive', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_BRANCH[0].trang_thai = 'INACTIVE';
+
+  const help = runRouterFlow({ update: telegramStatusUpdate({ text: '/help' }), tables, now: FIXED_NOW });
+  assert.equal(help.decision.kind, 'HELP');
+  assert.doesNotMatch(help.reply.text, /\/kiemke/);
+
+  const route = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+  assert.equal(route.decision.kind, 'DENY');
+  assert.equal(route.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
+});
+
+test('denies a business command whose catalog row omits its permission', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_LENH.push({
+    command_code: 'CMD_PUBLIC_INVALID',
+    command_text: '/publicinvalid',
+    syntax: '/publicinvalid',
+    description_vi: 'Lệnh nghiệp vụ thiếu quyền',
+    permission_code: '',
+    topic_type: 'KIEM_KE',
+    worker_workflow: 'WF05_V2_MO_PHIEN_KIEM_KE',
+    example: '/publicinvalid',
+    ordinal: '60',
+    trang_thai: 'ACTIVE',
+  });
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/publicinvalid' }), tables, now: FIXED_NOW });
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
+
+  const help = runRouterFlow({ update: telegramStatusUpdate({ text: '/help' }), tables, now: FIXED_NOW });
+  assert.equal(help.decision.kind, 'HELP');
+  assert.doesNotMatch(help.reply.text, /\/publicinvalid/);
 });
 
 test('routes a configured callback token by command_code and preserves callback identity', () => {

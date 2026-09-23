@@ -39,3 +39,17 @@ test('retry rejects a non-ADMIN role even when it has the retry permission', () 
   assert.equal(result.ok, false);
   assert.equal(result.response.error_code, 'USER_NOT_AUTHORIZED');
 });
+
+test('retry rejects malformed effective dates and inactive permissions', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_USER_ROLE.find((row) => row.user_id === 'admin-1').effective_from = 'not-a-date';
+  const malformedDate = planRetry({ actorUserId: 'admin-1', errorId: 'err-42', permissionCode: 'ADMIN_RETRY', tables, now: FIXED_NOW });
+  assert.equal(malformedDate.ok, false);
+  assert.equal(malformedDate.response.error_code, 'USER_NOT_AUTHORIZED');
+
+  const inactivePermissionTables = validConfigWithRouterTables();
+  inactivePermissionTables.CONFIG_PERMISSION.find((row) => row.permission_code === 'ADMIN_RETRY').trang_thai = 'INACTIVE';
+  const inactivePermission = planRetry({ actorUserId: 'admin-1', errorId: 'err-42', permissionCode: 'ADMIN_RETRY', tables: inactivePermissionTables, now: FIXED_NOW });
+  assert.equal(inactivePermission.ok, false);
+  assert.equal(inactivePermission.response.error_code, 'USER_NOT_AUTHORIZED');
+});

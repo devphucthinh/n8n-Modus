@@ -8,7 +8,7 @@ export function planRetry({ actorUserId, errorId, permissionCode, tables, now = 
   const row = (tables?.ERROR_BIA ?? []).find((candidate) => asText(candidate.error_id) === id && asText(candidate.status).toUpperCase() !== 'RESOLVED');
   if (!asText(permissionCode)
     || !hasRole({ actorUserId, roleCode: 'ADMIN', tables, now, branchId: '*' })
-    || !hasPermission({ actorUserId, permissionCode, tables, now })) return failure('USER_NOT_AUTHORIZED', `err-${id || 'unknown'}-retry-denied`);
+    || !hasPermission({ actorUserId, permissionCode, tables, now, topic: { branch_id: '*' } })) return failure('USER_NOT_AUTHORIZED', `err-${id || 'unknown'}-retry-denied`);
   if (!row) return failure('ERROR_NOT_FOUND', `err-${id || 'unknown'}-not-found`);
   if (!['YES', 'TRUE', '1'].includes(asText(row.retryable).toUpperCase())) return failure('ERROR_NOT_RETRYABLE', id);
   const operationId = asText(row.operation_id);

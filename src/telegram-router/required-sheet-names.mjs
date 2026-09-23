@@ -7,6 +7,15 @@ const FULL_ROUTER_SHEETS = Object.freeze([
   'CONFIG_LENH',
   'EVENT_LOG',
 ]);
+const HELP_ROUTER_SHEETS = Object.freeze([
+  'CONFIG_ROLE',
+  'CONFIG_PERMISSION',
+  'CONFIG_USER_ROLE',
+  'CONFIG_ROLE_PERMISSION',
+  'CONFIG_TOPIC',
+  'CONFIG_LENH',
+  'EVENT_LOG',
+]);
 
 /**
  * Return only the configuration tabs needed by a Telegram command.
@@ -16,6 +25,6 @@ const FULL_ROUTER_SHEETS = Object.freeze([
 export function requiredSheetNames(command) {
   const normalized = command == null ? '' : String(command).trim().toLowerCase();
   if (normalized === '/trangthai') return [];
-  if (normalized === '/help') return ['CONFIG_LENH', 'CONFIG_PERMISSION'];
+  if (normalized === '/help') return [...HELP_ROUTER_SHEETS];
   return [...FULL_ROUTER_SHEETS];
 }

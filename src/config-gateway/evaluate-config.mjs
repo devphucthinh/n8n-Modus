@@ -6,6 +6,23 @@ const SCHEMA_DATA_TYPES = new Set(['STRING', 'INTEGER', 'NUMBER', 'BOOLEAN', 'DA
 const ACTIVE = 'ACTIVE';
 const SNAPSHOT_CELL_MAX_CHARS = 49000;
 const SNAPSHOT_FORMAT = 'columnar-v1';
+const READ_ONLY_OPERATION_TYPES = new Set(['READ_STATUS', 'READ_HELP', 'COMMAND_NOT_AVAILABLE', 'ROUTE_COMMAND', 'MANUAL_RETRY']);
+const REQUIRED_MESSAGE_KEYS = Object.freeze([
+  'STATUS_HEADER',
+  'STATUS_GATEWAY_HEALTH_LINE',
+  'STATUS_CONFIG_LINE',
+  'STATUS_BRANCH_COUNT_LINE',
+  'STATUS_BRANCH_LINE',
+  'STATUS_MAINTENANCE_LINE',
+  'ERROR_GENERIC',
+  'USER_NOT_ACTIVE',
+  'COMMAND_NOT_AVAILABLE',
+  'HELP_HEADER',
+  'ROUTER_COMMAND_ACCEPTED',
+  'ROUTER_RETRY_ACCEPTED',
+  'ROUTER_DUPLICATE',
+]);
+const OPERATION_IDENTITY_FIELDS = Object.freeze(['request_id', 'operation_type', 'idempotency_key', 'checksum']);
 
 const asText = (value) => (value == null ? '' : String(value).trim());
 const isBlank = (value) => asText(value) === '';
@@ -91,6 +108,17 @@ function validateCoreTables(tables, envelope) {
     }
   }
   return null;
+}
+
+function validateConfiguredMessages(tables, envelope) {
+  const activeKeys = new Set((tableRows(tables, 'CONFIG_THONG_BAO') ?? [])
+    .filter((row) => asText(row.trang_thai).toUpperCase() === ACTIVE && !isBlank(row.message_text))
+    .map((row) => asText(row.message_key))
+    .filter(Boolean));
+  const missingKey = REQUIRED_MESSAGE_KEYS.find((key) => !activeKeys.has(key));
+  return missingKey
+    ? makeFailure('CONFIG_MESSAGE_MISSING', `Missing active message template ${missingKey}`, envelope, { message_key: missingKey })
+    : null;
 }
 
 function requestedSheetNames(envelope) {
@@ -269,11 +297,16 @@ function snapshotStorageJson(normalizedConfigJson, fingerprint) {
 
 function expandSnapshotPayload(value) {
   if (!value || typeof value !== 'object' || value.__snapshot_format !== SNAPSHOT_FORMAT) return value;
-  return Object.fromEntries(Object.entries(value.sheets ?? {}).map(([sheetName, sheet]) => {
-    const columns = Array.isArray(sheet?.columns) ? sheet.columns.map(asText) : [];
-    const rows = Array.isArray(sheet?.rows) ? sheet.rows : [];
-    return [sheetName, rows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row?.[index] ?? ''])))];
-  }));
+  if (!value.sheets || typeof value.sheets !== 'object' || Array.isArray(value.sheets)) return null;
+  const expanded = {};
+  for (const [sheetName, sheet] of Object.entries(value.sheets)) {
+    const columns = Array.isArray(sheet?.columns) ? sheet.columns.map(asText) : null;
+    const rows = Array.isArray(sheet?.rows) ? sheet.rows : null;
+    if (!columns || !rows || new Set(columns).size !== columns.length || columns.some(isBlank)) return null;
+    if (rows.some((row) => !Array.isArray(row) || row.length !== columns.length)) return null;
+    expanded[sheetName] = rows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index] ?? ''])));
+  }
+  return expanded;
 }
 
 function activeVersionRow(tables) {
@@ -302,17 +335,35 @@ function committedPredecessor(tables) {
       if (asText(row.status).toUpperCase() !== 'COMMITTED') return false;
       if (!committedOperations.has(asText(row.operation_id))) return false;
       const operationType = committedOperations.get(asText(row.operation_id));
-      return operationType !== 'READ_STATUS' && operationType !== 'READ_HELP' && operationType !== 'COMMAND_NOT_AVAILABLE';
+      return !READ_ONLY_OPERATION_TYPES.has(operationType);
     })
     .sort((left, right) => asText(left.created_at).localeCompare(asText(right.created_at)))
     .at(-1) ?? null;
 }
 
+function operationIdentityConflict(existing, proposed) {
+  return OPERATION_IDENTITY_FIELDS.find((field) => {
+    const stored = asText(existing?.[field]);
+    return !stored || stored !== asText(proposed?.[field]);
+  }) ?? null;
+}
+
 function snapshotContentMatches(predecessor, normalizedConfigJson) {
   try {
     const stored = JSON.parse(asText(predecessor?.normalized_config_json));
+    if (stored?.__snapshot_format === SNAPSHOT_FORMAT) {
+      const expanded = expandSnapshotPayload(stored);
+      if (!expanded) return false;
+      if (stored.__scope !== Object.keys(expanded).sort().join('|')) return false;
+      const expandedJson = canonicalJson(expanded);
+      if (stored.__fingerprint !== sha256(expandedJson)) return false;
+      if (stored.__fingerprint !== asText(predecessor?.fingerprint)) return false;
+      return expandedJson === normalizedConfigJson;
+    }
+    if (canonicalJson(stored) === normalizedConfigJson) return asText(predecessor?.fingerprint) === sha256(normalizedConfigJson);
     if (!containsSheetRowMetadata(stored)) return false;
-    return canonicalJson(stripSheetRowMetadata(stored)) === normalizedConfigJson;
+    const legacyJson = canonicalJson(stripSheetRowMetadata(stored));
+    return asText(predecessor?.fingerprint) === sha256(legacyJson) && legacyJson === normalizedConfigJson;
   } catch {
     return false;
   }
@@ -385,6 +436,9 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const tableError = validateCoreTables(tables, normalizedEnvelope);
   if (tableError) return decorateFailure(tableError);
 
+  const messageError = validateConfiguredMessages(tables, normalizedEnvelope);
+  if (messageError) return decorateFailure(messageError);
+
   const requestedError = validateRequestedTables(tables, normalizedEnvelope, requested);
   if (requestedError) return decorateFailure(requestedError);
 
@@ -425,7 +479,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
     };
   }
-  if (operationType === 'READ_STATUS' || operationType === 'READ_HELP') {
+  if (READ_ONLY_OPERATION_TYPES.has(operationType)) {
     return {
       ok: true,
       response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
@@ -435,8 +489,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   }
   if (predecessor) {
     const sameVersion = configVersion === asText(predecessor.config_version);
-    const sameFingerprint = fingerprint === asText(predecessor.fingerprint)
-      || snapshotContentMatches(predecessor, normalizedConfigJson);
+    const sameFingerprint = snapshotContentMatches(predecessor, normalizedConfigJson);
     if (sameVersion && !sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'Configuration content changed without incrementing config_version', normalizedEnvelope));
     if (!sameVersion && sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_EMPTY_CHANGE', 'config_version changed without configuration content changing', normalizedEnvelope));
     if (!sameVersion && !isVersionGreater(configVersion, predecessor.config_version)) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'config_version must increase', normalizedEnvelope));
@@ -458,20 +511,52 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     }));
   }
 
-  const snapshotId = `cfg-${configVersion.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint.slice(0, 16)}`;
-  const operationId = asText(envelope.operation_id) || `op-${snapshotId}`;
+  const snapshotBaseId = `cfg-${configVersion.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint.slice(0, 16)}`;
+  const operationId = asText(envelope.operation_id) || `op-${snapshotBaseId}`;
   const requestId = asText(envelope.request_id);
-  const operationRow = {
-    operation_id: operationId,
+  const operationIdentity = {
     request_id: requestId,
     operation_type: operationType,
     idempotency_key: asText(envelope.payload?.idempotency_key) || requestId || operationId,
+    checksum: fingerprint,
+  };
+  const existingOperation = (tableRows(tables, 'OPERATION') ?? []).find((row) => asText(row.operation_id) === operationId);
+  if (asText(existingOperation?.status).toUpperCase() === 'COMMITTED') {
+    return decorateFailure(makeFailure('OPERATION_ID_COMMITTED', 'operation_id is already committed', normalizedEnvelope));
+  }
+  const identityConflict = existingOperation ? operationIdentityConflict(existingOperation, operationIdentity) : null;
+  if (identityConflict) {
+    return decorateFailure(makeFailure('OPERATION_ID_COLLISION', 'operation identity conflicts with an existing operation', normalizedEnvelope, { identity_field: identityConflict }));
+  }
+  const snapshotRows = tableRows(tables, 'CONFIG_SNAPSHOT') ?? [];
+  const snapshotsForOperation = snapshotRows.filter((row) => asText(row.operation_id) === operationId);
+  const existingSnapshotForOperation = snapshotRows.find((row) => asText(row.operation_id) === operationId
+    && asText(row.config_version) === configVersion
+    && asText(row.fingerprint) === fingerprint);
+  if (existingOperation && snapshotsForOperation.some((row) => asText(row.config_version) !== configVersion || asText(row.fingerprint) !== fingerprint)) {
+    return decorateFailure(makeFailure('OPERATION_RECOVERY_MISMATCH', 'operation recovery does not match its existing snapshot', normalizedEnvelope));
+  }
+  const occupiedSnapshotIds = new Set(snapshotRows
+    .map((row) => asText(row.config_snapshot_id))
+    .filter(Boolean));
+  let snapshotId = asText(existingSnapshotForOperation?.config_snapshot_id) || snapshotBaseId;
+  if (occupiedSnapshotIds.has(snapshotId) && !existingSnapshotForOperation) {
+    const repairSuffix = operationId.replace(/[^A-Za-z0-9._-]/g, '_') || 'unknown';
+    snapshotId = `${snapshotBaseId}-repair-${repairSuffix}`;
+    let attempt = 2;
+    while (occupiedSnapshotIds.has(snapshotId)) {
+      snapshotId = `${snapshotBaseId}-repair-${repairSuffix}-${attempt}`;
+      attempt += 1;
+    }
+  }
+  const operationRow = {
+    operation_id: operationId,
+    ...operationIdentity,
     expected_row_count: '1',
     actual_row_count: '',
-    checksum: fingerprint,
     status: 'PREPARED',
     error_id: '',
-    created_at: now,
+    created_at: asText(existingOperation?.created_at) || now,
     updated_at: now,
   };
   const snapshotRow = {
@@ -488,8 +573,8 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     ok: true,
     response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
     write_plan: [
-      { sheet: 'OPERATION', action: 'APPEND', row: operationRow },
-      { sheet: 'CONFIG_SNAPSHOT', action: 'APPEND', row: snapshotRow },
+      { sheet: 'OPERATION', action: existingOperation ? 'UPSERT' : 'APPEND', row: operationRow },
+      { sheet: 'CONFIG_SNAPSHOT', action: snapshotRows.some((row) => asText(row.config_snapshot_id) === snapshotId) ? 'UPSERT' : 'APPEND', row: snapshotRow },
       { sheet: 'CONFIG_SNAPSHOT', action: 'UPDATE', match: { config_snapshot_id: snapshotId }, patch: { status: 'COMMITTED' } },
       { sheet: 'OPERATION', action: 'UPDATE', match: { operation_id: operationId }, patch: { status: 'COMMITTED', actual_row_count: '1', updated_at: now } },
     ],
