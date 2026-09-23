@@ -74,10 +74,17 @@ These observations are not a complete release gate. The inspected n8n workflow i
 | Case | Evidence observed | Result |
 |---|---|---|
 | `/help` | WF03 execution `#141` succeeded; input normalized `/HELP` to `/help`. User-provided Telegram capture in this task shows the configured command catalog. | `PARTIAL` — exact active/inactive catalog reconciliation was not captured from the same execution. |
-| Valid `/kiemke` | WF03 execution `#152` succeeded; route-reservation and Telegram-reply nodes ran. | `PARTIAL` — the persisted OPERATION row and resolved branch/topic/worker fields were not independently inspected. |
+| Valid `/kiemke` | WF03 execution `#152` succeeded; route-reservation and Telegram-reply nodes ran. | `FAIL` — generated WF03 has no worker Execute Workflow node: it reserves the operation and replies, but does not invoke `worker_workflow`; the business command is not fully routed. |
 | `/trangthai` active user; unknown/inactive user; wrong topic/permission; duplicate update; callback replay; `/retry` | No qualifying execution evidence was verified in this review. | `PENDING` |
 
-Local verification at commit `9fa4f1a`: `npm run verify` passed (3 workflows validated; 113 tests passed), and `git diff --check` passed. Code review still has unresolved Standards findings: P2, the hard-coded `ADMIN` retry-role check versus ADR 0021; P3, duplicated effective-date-window validation in authorization paths. Do not merge until the P2 is resolved and the P3 is dispositioned. These local checks do not substitute for the remaining live smoke cases.
+Local verification at commit `9fa4f1a`: `npm run verify` passed (3 workflows validated; 113 tests passed), and `git diff --check` passed. Code review blockers:
+
+- `P1` Spec: WF03 never calls the configured worker with the standard envelope; `/retry` also only returns an accepted decision and does not execute the retry.
+- `P2` Spec/Standards: retry requires a global `ADMIN` assignment (`branch_id='*'`), rejecting branch-scoped admins allowed by ADR 0021; the hard-coded role check also conflicts with the ADR's config-driven permission mapping.
+- `P2` Spec: `/help` prints an empty `Quyền:` value when a command has no permission code instead of an explicit “Không yêu cầu”.
+- `P3` Standards: effective-date-window validation is duplicated across authorization paths.
+
+Do not merge until the P1/P2 findings are resolved and the P3 is dispositioned. Local checks do not substitute for the remaining live smoke cases.
 
 ## Release gate
 
