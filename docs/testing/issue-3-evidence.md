@@ -21,9 +21,12 @@ the same time and were stopped manually to release the execution slots:
 
 The exact Telegram command for those historical executions was not verified
 from the execution payload, so these references are diagnostic only and do
-not count as `/help` smoke evidence. The regression fix narrows `/help` to
-`CONFIG_LENH` instead of reading every optional router/audit sheet. Re-run the
-live matrix after WF01 is published and the Cloud workspace reconnects.
+not count as `/help` smoke evidence. The regression fix reads `CONFIG_LENH`
+plus the minimal role, permission, and topic tables needed to apply per-topic
+visibility; it skips reading `EVENT_LOG` and operational ledgers for `/help`.
+Denied access still creates a deterministic `event_id`; WF03 writes it via
+`appendOrUpdate` keyed by that ID, so idempotent audit does not need a pre-read.
+Re-run the live matrix after WF01 is published and the Cloud workspace reconnects.
 
 ## Google Sheets read fan-out fix
 
@@ -65,7 +68,7 @@ this path (`does not dereference optional router reads that were skipped`).
 | Wrong topic/permission | Safe denial; one idempotent `EVENT_LOG` row; no worker call | `<WF03 execution + EVENT_LOG row ref>` | `PENDING` |
 | Same message `update_id` replay | No second route reservation or audit row | `<two execution refs>` | `PENDING` |
 | Same callback ID with a new `update_id` | No second route reservation; Telegram callback is answered | `<two execution refs + callback answer ref>` | `PENDING` |
-| `/retry <error_id>` | Only configured admin can retry a retryable error and original keys are reused | `<WF03 execution ref>` | `PENDING` |
+| `/retry <error_id>` | Must fail closed unless the original business payload can be recovered; current two-column migration does not persist that payload | `<WF03 execution ref>` | `PENDING` |
 
 ## Sanitized observations — 2026-09-23
 
@@ -84,8 +87,26 @@ Local verification at commit `9fa4f1a`: `npm run verify` passed (3 workflows val
 - `P2` Spec: `/help` prints an empty `Quyền:` value when a command has no permission code instead of an explicit “Không yêu cầu”.
 - `P3` Standards: effective-date-window validation is duplicated across authorization paths.
 
-Do not merge until the P1/P2 findings are resolved and the P3 is dispositioned. Local checks do not substitute for the remaining live smoke cases.
+## Local remediation status — 2026-09-23
+
+The local Issue #3 worktree now has these code-level remediations:
+
+| Finding | Local result | Regression evidence | Live status |
+|---|---|---|---|
+| P2 retry rejects branch-scoped roles / hard-codes `ADMIN` | Authorization now follows active Sheet permission mappings and the branch of the exact active forum topic; however, a successful retry is not available without the original payload. | `router-flow.test.mjs` and `retry-command.test.mjs`: branch-scoped authorization is checked, then retry fails closed with `ERROR_RETRY_CONTEXT_MISSING`. | `PENDING` |
+| P2 `/help` shows an empty permission | Blank permission displays `Không yêu cầu`. | `router-flow.test.mjs`, `command-catalog.test.mjs`, and generated WF03 Code-node sandbox test. | `PENDING` |
+| P3 duplicated effective-date logic | Consolidated into `isWithinEffectiveWindow`, shared by authorization helpers and the self-contained WF03 artifact. | `effective-window.test.mjs` covers inclusive endpoints, unbounded values, malformed bounds, and invalid current time. | `LOCAL FIXED` |
+
+The branch-specific retry permission is evaluated against the topic where `/retry` is issued. A prepared local Sheet migration adds only the optional `branch_id` and `idempotency_key` columns to `ERROR_BIA`; it does not modify the live Sheet. Those keys support authorization and deduplication, but they are not enough to replay the original command.
+
+The worker-invocation path is now present in the local WF03 artifact and covered by regression tests. However, `/retry` is deliberately fail-closed with `ERROR_RETRY_CONTEXT_MISSING`: `ERROR_BIA` and `OPERATION` do not persist the original request payload, and the user chose not to add a payload column. It would be unsafe to reconstruct it from an error ID, command catalog row, and idempotency key. This remains a P1 against ADR 0005 and blocks claiming retry is complete. The required live smoke matrix is also still `PENDING`; local tests do not count as n8n evidence.
+
+Additional review fixes in the local artifact: a matching `PREPARED` operation now continues through dispatch with the same reservation identity (while terminal/unknown status remains deduplicated), and only a worker response with explicit `ok: true` commits that reservation. Returned worker failures or malformed responses are routed to WF02 and leave the router reservation `FAILED`. Regression tests exercise prepared-operation recovery, generated WF03 `/help`, `/kiemke`, `/retry`, and the worker result/error topology. These remain local-code evidence only.
+
+`WF10` and `/baocaobia` remain deferred by scope. Other live workflow readiness prerequisites, including the `business_date`/`CONFIG_LICH` contract needed by WF05, have not been verified as satisfied. No live Google Sheet edits, production publish/activation, or production smoke tests were performed in this remediation.
+
+Do not merge or close issue #3 until P1 is resolved, all required live smoke cases are green, and the PR review passes. Local checks do not substitute for the remaining live smoke cases.
 
 ## Release gate
 
-Do not merge PR #21 or close issue #3 while any required case is `PENDING`/`FAIL`. Attach the completed evidence to the PR or issue without adding secret values.
+Do not merge PR #21 or close issue #3 while any required case is `PENDING`/`FAIL`, `/retry` cannot replay the original payload, or a required worker is not ready. Attach the completed evidence to the PR or issue without adding secret values.

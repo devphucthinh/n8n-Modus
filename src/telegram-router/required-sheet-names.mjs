@@ -14,7 +14,6 @@ const HELP_ROUTER_SHEETS = Object.freeze([
   'CONFIG_ROLE_PERMISSION',
   'CONFIG_TOPIC',
   'CONFIG_LENH',
-  'EVENT_LOG',
 ]);
 
 /**
@@ -26,5 +25,6 @@ export function requiredSheetNames(command) {
   const normalized = command == null ? '' : String(command).trim().toLowerCase();
   if (normalized === '/trangthai') return [];
   if (normalized === '/help') return [...HELP_ROUTER_SHEETS];
+  if (normalized === '/retry') return [...FULL_ROUTER_SHEETS, 'RETRY_CONTEXT'];
   return [...FULL_ROUTER_SHEETS];
 }

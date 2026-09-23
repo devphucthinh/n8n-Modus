@@ -1,16 +1,19 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { availableWorkerTargets } from '../src/telegram-router/worker-targets.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(root, 'workflows');
 const expected = ['WF01_V2_CONFIG_GATEWAY.json', 'WF02_V2_ERROR_HANDLER.json', 'WF03_V2_TELEGRAM_ROUTER.json'];
 const googleSheetId = '1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4';
 const workflowTargets = new Map([
-  ['Call Error Handler', 'MoG6coBccYkIS0nK'],
-  ['Call Config Gateway', 'WEL83s9bZeB3ixxF'],
-  ['Call Config Gateway - Command Check', 'WEL83s9bZeB3ixxF'],
+  ['Call Error Handler', 'WF02_V2_ERROR_HANDLER'],
+  ['Call Config Gateway', 'WF01_V2_CONFIG_GATEWAY'],
+  ['Call Config Gateway - Command Check', 'WF01_V2_CONFIG_GATEWAY'],
+  ['Call Error Handler - Worker Failure', 'WF02_V2_ERROR_HANDLER'],
 ]);
+for (const target of availableWorkerTargets()) workflowTargets.set(target.node_name, target.workflow_name);
 const secretPattern = /\b\d{8,}:[A-Za-z0-9_-]{20,}\b|AIza[0-9A-Za-z_-]{20,}|Bearer\s+[A-Za-z0-9._-]+/;
 const errors = [];
 
@@ -49,7 +52,16 @@ for (const filename of files) {
           if (!condition.operator || typeof condition.operator !== 'object') errors.push(`${filename}: IF node ${node.name} has no n8n v2 operator`);
         }
       }
-      if (workflowTargets.has(node.name) && node.parameters?.workflowId?.value !== workflowTargets.get(node.name)) errors.push(`${filename}: Execute Workflow node ${node.name} has an unexpected workflow ID`);
+      if (workflowTargets.has(node.name)) {
+        const workflowId = node.parameters?.workflowId;
+        const targetName = workflowTargets.get(node.name);
+        if (workflowId?.value !== '' || workflowId?.mode !== 'list' || !node.notes?.includes(targetName)) {
+          errors.push(`${filename}: Execute Workflow node ${node.name} must be an unselected workflow-list reference annotated with ${targetName}`);
+        }
+      }
+      if (node.name.startsWith('Call Worker ') && node.onError !== 'continueErrorOutput') {
+        errors.push(`${filename}: worker node ${node.name} must route thrown errors to the Error Handler path`);
+      }
       if (node.type === 'n8n-nodes-base.telegram' || node.type === 'n8n-nodes-base.telegramTrigger') {
         if (node.credentials?.telegramApi?.name !== 'TELEGRAM_KKB_V2') errors.push(`${filename}: Telegram credential mismatch`);
       }

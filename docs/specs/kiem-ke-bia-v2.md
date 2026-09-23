@@ -200,6 +200,10 @@ Các workflow dùng chung contract input/output/error, immutable IDs, `config_sn
 - Sáu role baseline: `KIEM_KE`, `NHAP_HANG`, `DUYET_NHAP`, `NHAP_BAN`, `BAO_CAO`, `ADMIN`.
 - Khả năng chi tiết nằm trong `CONFIG_ROLE_PERMISSION`; `CONFIG_USER_ROLE` gán theo `branch_id`, `*` là toàn hệ thống.
 - Baseline: `KIEM_KE` nhập/giải trình/chốt; `NHAP_HANG` tạo/sửa nháp; `DUYET_NHAP` duyệt dòng/điều chỉnh nhập; `NHAP_BAN` tải/kiểm tra/publish; `BAO_CAO` xem trạng thái/báo cáo; `ADMIN` config, phân quyền, mở lại, hủy, retry và cutover.
+- Router phân quyền theo permission đang hoạt động trong `CONFIG_LENH` → `CONFIG_PERMISSION` → `CONFIG_ROLE_PERMISSION` và assignment đang hoạt động trong `CONFIG_USER_ROLE`; không hard-code tên role để cấp quyền cho một command.
+- Assignment có hiệu lực khi thời điểm hiện tại nằm trong `[effective_from, effective_to]` (hai đầu mút bao gồm); bound trống là không giới hạn, ngày sai định dạng hoặc thời điểm hiện tại không hợp lệ với bound đã cấu hình thì từ chối.
+- Với command trong forum topic, assignment phải có `branch_id='*'` hoặc trùng branch của topic đã ánh xạ. `/retry` dùng permission `CONFIG_LENH` đang cấu hình; nếu không xác định được topic thì chỉ assignment toàn hệ thống được phép.
+- `/help` vẫn hiển thị lệnh không cần permission; dòng quyền của lệnh đó ghi rõ `Không yêu cầu`.
 - `/trangthai` chỉ đọc được mở cho mọi user đang active theo ADR; các thao tác khác yêu cầu permission tương ứng.
 
 ### Contract, idempotency và staged commit

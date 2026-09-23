@@ -41,7 +41,7 @@ export function validConfig() {
     CONFIG_THONG_BAO: ['message_key', 'message_text', 'locale', 'trang_thai'],
     CONFIG_SNAPSHOT: ['config_snapshot_id', 'config_version', 'schema_version', 'fingerprint', 'normalized_config_json', 'operation_id', 'status', 'created_at'],
     OPERATION: ['operation_id', 'request_id', 'operation_type', 'idempotency_key', 'expected_row_count', 'actual_row_count', 'checksum', 'status', 'error_id', 'created_at', 'updated_at'],
-    ERROR_BIA: ['error_id', 'error_code', 'error_class', 'retryable', 'message_safe', 'workflow', 'node', 'operation_id', 'request_id', 'config_version', 'fingerprint', 'status', 'created_at', 'resolved_at'],
+    ERROR_BIA: ['error_id', 'error_code', 'error_class', 'retryable', 'message_safe', 'workflow', 'node', 'operation_id', 'request_id', 'config_version', 'fingerprint', 'status', 'created_at', 'resolved_at', 'branch_id', 'idempotency_key'],
   };
   const unique = {
     CONFIG_VERSION: new Set(['config_version']),
@@ -155,9 +155,9 @@ const routerRows = {
   ],
   CONFIG_TOPIC: [
     ['topic-kiem-ke', 'CN_HN', 'KIEM_KE', '-100100', '77', 'ACTIVE'],
-    ['topic-nhap-hang', 'CN_HN', 'NHAP_HANG', '-100100', '77', 'ACTIVE'],
-    ['topic-nhap-ban', 'CN_HN', 'NHAP_BAN', '-100100', '77', 'ACTIVE'],
-    ['topic-bao-cao', 'CN_HN', 'BAO_CAO', '-100100', '77', 'ACTIVE'],
+    ['topic-nhap-hang', 'CN_HN', 'NHAP_HANG', '-100100', '78', 'ACTIVE'],
+    ['topic-nhap-ban', 'CN_HN', 'NHAP_BAN', '-100100', '79', 'ACTIVE'],
+    ['topic-bao-cao', 'CN_HN', 'BAO_CAO', '-100100', '80', 'ACTIVE'],
   ],
   CONFIG_LENH: [
     ['CMD_KIEM_KE', '/kiemke', '/kiemke', 'Mở phiên kiểm kê', 'KIEM_KE_WRITE', 'KIEM_KE', 'WF05_V2_MO_PHIEN_KIEM_KE', '/kiemke', '10', 'ACTIVE'],
@@ -184,8 +184,28 @@ export function validConfigWithRouterTables() {
   }
   tables.EVENT_LOG = [];
   tables.ERROR_BIA = rowsFrom([
-    'error_id', 'error_code', 'error_class', 'retryable', 'message_safe', 'workflow', 'node', 'operation_id', 'request_id', 'config_version', 'fingerprint', 'status', 'created_at', 'resolved_at',
-  ], [['err-42', 'TEMPORARY', 'TRANSIENT', 'YES', 'Tạm thời', 'WF05', 'Node', 'op-original-42', 'tg-original-42', 'v1', 'fp', 'OPEN', FIXED_NOW, '']]);
+    'error_id', 'error_code', 'error_class', 'retryable', 'message_safe', 'workflow', 'node', 'operation_id', 'request_id', 'config_version', 'fingerprint', 'status', 'created_at', 'resolved_at', 'branch_id', 'idempotency_key',
+  ], [['err-42', 'TEMPORARY', 'TRANSIENT', 'YES', 'Tạm thời', 'WF05_V2_MO_PHIEN_KIEM_KE', 'Node', 'op-original-42', 'tg-original-42', 'v1', 'fp', 'OPEN', FIXED_NOW, '', 'CN_HN', 'tg-original-42']]);
+  return tables;
+}
+
+export function validConfigWithRetryContext() {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_VERSION[0] = { ...tables.CONFIG_VERSION[0], config_version: 'v1.3', schema_version: '1.1' };
+  for (const rule of tables.CONFIG_SCHEMA) {
+    if (rule.sheet_name === 'ERROR_BIA' && ['branch_id', 'idempotency_key'].includes(rule.column_name)) {
+      rule.schema_version = '1.1';
+    }
+  }
+  const extraDefinitions = {
+    RETRY_CONTEXT: ['operation_id', 'envelope_version', 'worker_envelope_json', 'envelope_sha256', 'context_status', 'created_at', 'updated_at'],
+  };
+  for (const [sheetName, columns] of Object.entries(extraDefinitions)) {
+    tables.CONFIG_SCHEMA.push(...columns.map((columnName, index) => rowsFrom(SCHEMA_COLUMNS, [[
+      `rule-${sheetName}-${columnName}`, '1.1', sheetName, columnName, 'STRING', 'NO', '', '', '', '', String(index + 1), `Fixture ${sheetName}.${columnName}`, 'ACTIVE',
+    ]])[0]));
+  }
+  tables.RETRY_CONTEXT = [];
   return tables;
 }
 

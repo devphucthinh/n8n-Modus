@@ -22,6 +22,8 @@ The earlier branch commit `1642361` already removed Google Sheets `row_number` m
 
 ## Files changed on this branch
 
+This list describes the original config-snapshot change only. Subsequent Issue #3 continuation work is also present in the current worktree and must be reviewed/staged separately:
+
 - `src/config-gateway/evaluate-config.mjs`
 - `workflows/WF01_V2_CONFIG_GATEWAY.json`
 - `test/config-gateway/versioning.test.mjs`
@@ -41,6 +43,15 @@ test/workflows/generated-artifacts.test.mjs     15 passed
 
 The oversized regression builds a configuration over 50,000 characters, asserts the stored cell is below the limit, checks `columnar-v1`, preserves the fingerprint, and verifies the generated WF01 artifact keeps the repeated data.
 
+## Continuation state — 2026-09-23
+
+- WF03 now has a local worker-dispatch path that resolves the supported worker targets, reserves a router-specific operation key, sends the standard envelope, and handles child-workflow failures. This is locally verified only; it is not evidence of a live n8n smoke pass.
+- The generated Router Decision Code node now bundles every helper it calls; an artifact-level sandbox test executes `/help`, `/kiemke`, and the fail-closed `/retry` path. Existing `PREPARED` reservations resume through the worker using the same identity. Returned errors or malformed worker responses go through WF02; only `ok: true` commits the router reservation.
+- `/retry` cannot safely replay the original operation with the present `ERROR_BIA` and `OPERATION` fields. The implementation now fails closed with `ERROR_RETRY_CONTEXT_MISSING` and hides `/retry` from `/help`. The user chose to prepare only `branch_id` and `idempotency_key`; a header template is at `docs/maintenance/issue-3-error-bia-optional-columns.csv`. Do not add a payload column or change the live Sheet. The two fields do not resolve the retry blocker.
+- The original Issue #3 GitHub body could not be fetched from this environment because `gh` is blocked by the configured proxy. Current decisions and evidence are local.
+- No live Sheet edits, publish/activation, or production smoke were performed. Keep testing on the n8n shadow/test workflow. `/baocaobia` is out of this issue's scope until WF10 exists.
+- Issue #3 is not ready to merge/close while ADR 0005's successful retry requirement is unsatisfied or required shadow smoke evidence remains pending.
+
 Before claiming completion, run the full commands below on this branch and record fresh output:
 
 ```powershell
@@ -51,20 +62,13 @@ git diff --check
 ## Next agent sequence
 
 1. Inspect `git status` and `git diff`; stage only the files listed above plus this handoff. Leave unrelated files from the original dirty `master` checkout out of the commit.
-2. Review the diff against `c75d8e7` and the Issue #3 acceptance criteria. Confirm no credentials, tokens, private Sheet rows, or temporary exports are included.
-3. Commit with a focused message such as `fix(issue-3): pack oversized config snapshots`.
-4. Push this branch and create/update a PR into `master`. Preserve the existing Issue #3 branch history; do not force-push.
-5. In n8n, keep the draft inactive while importing or updating the generated WF01 artifact. Confirm the live Code node is equivalent to source and that the WF02 reference remains intact.
-6. Publish/activate only after the test workflow is green. Run this production smoke matrix:
-   - `/help`
-   - `/trangthai`
-   - `/kiemke`
-   - `/nhaphang`
-   - `/nhapban`
-   - `/baocaobia`
-   - one unauthorized-user/topic denial
-7. Check executions and the live Sheet: no 50,000-character error, no `CONFIG_SNAPSHOT_TOO_LARGE` for the normal configuration, and successful `OPERATION`/`CONFIG_SNAPSHOT` commit rows. Record only sanitized execution IDs and timestamps.
-8. After release evidence is captured, continue with the shared-contract integration branch. `WF07` reconciliation/close-book and `WF10` reporting remain later work; do not broaden this fix into those workflows.
+2. Review the full current diff against `c75d8e7` and the local Issue #3 spec/ADR. Confirm no credentials, tokens, private Sheet rows, or temporary exports are included; note that GitHub Issue #3 was unavailable from this environment.
+3. After review passes, commit only the intended Issue #3 changes, then update existing PR #21 on `codex/issue-3-config-snapshot-handoff`; do not create a duplicate PR or force-push.
+4. Import/update the generated artifacts in the n8n shadow/test workflow only. Keep production inactive/unchanged. Confirm the selected workflow names and the WF01/WF02 links after import.
+5. On shadow/test, collect sanitized evidence for `/help`, `/trangthai`, `/kiemke`, `/nhaphang`, `/nhapban`, wrong permission/topic, duplicate update, callback replay, and `/retry` failing closed without a worker call or reservation. Verify snapshot packing with a real-sized test configuration. Do not include `/baocaobia` until WF10 is delivered.
+6. Keep `/retry` and Issue #3 open: ADR 0005 requires retrying the same operation, but neither the chosen two-column ERROR_BIA change nor OPERATION stores the original payload. A separate approved design for payload recovery/persistence is required before that feature can pass.
+7. Do not publish/activate production or merge/close Issue #3 until the retry gap is resolved, all required shadow smoke cases are green, review passes, and the user explicitly approves the release step.
+8. After Issue #3 is accepted, continue the shared-contract integration; WF07 reconciliation/close-book and WF10 reporting remain later work.
 
 ## Important constraints
 

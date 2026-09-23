@@ -33,6 +33,7 @@ test('help renders all active configured commands and omits inactive commands', 
   assert.match(result.text, /\/kiemke/);
   assert.match(result.text, /Cú pháp/);
   assert.match(result.text, /Quyền/);
+  assert.match(result.text, /Quyền: Không yêu cầu/);
   assert.doesNotMatch(result.text, /\/an/);
 });
 

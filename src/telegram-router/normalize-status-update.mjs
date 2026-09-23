@@ -32,10 +32,11 @@ export function normalizeTelegramUpdate(update) {
     message_thread_id: message.message_thread_id == null ? null : text(message.message_thread_id),
   };
   const idempotencyKey = callback?.id ? `tg-callback-${text(callback.id)}` : `tg-${stableId}`;
+  const operationId = callback?.id ? idempotencyKey : `tg-${stableId}`;
   return {
     envelope: {
       request_id: `tg-${stableId}`,
-      operation_id: `tg-${stableId}`,
+      operation_id: operationId,
       event_type: 'TELEGRAM_UPDATE',
       actor_user_id: text(actor.id),
       branch_id: null,

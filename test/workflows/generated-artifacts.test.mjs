@@ -7,12 +7,18 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envelope, validConfig, validConfigWithRouterTables } from '../fixtures/config/valid-config.mjs';
+import { FIXED_NOW } from '../fixtures/config/valid-config.mjs';
+import { normalizeTelegramUpdate } from '../../src/telegram-router/normalize-status-update.mjs';
+import { requiredSheetNames } from '../../src/telegram-router/required-sheet-names.mjs';
+import { evaluateConfigGateway } from '../../src/config-gateway/evaluate-config.mjs';
+import { availableWorkerTargets } from '../../src/telegram-router/worker-targets.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const workflowDir = path.join(root, 'workflows');
 const GOOGLE_SHEET_ID = '1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4';
-const WF01_WORKFLOW_ID = 'WEL83s9bZeB3ixxF';
-const WF02_WORKFLOW_ID = 'MoG6coBccYkIS0nK';
+const WF01_WORKFLOW_NAME = 'WF01_V2_CONFIG_GATEWAY';
+const WF02_WORKFLOW_NAME = 'WF02_V2_ERROR_HANDLER';
+const WORKER_TARGETS = availableWorkerTargets();
 
 async function loadGeneratedWorkflows() {
   const files = (await readdir(workflowDir)).filter((file) => file.endsWith('.json')).sort();
@@ -39,6 +45,24 @@ test('exports contain the configured Sheet ID and credential names but no secret
   assert.doesNotMatch(text, /\b\d{8,}:[A-Za-z0-9_-]{20,}\b|AIza[0-9A-Za-z_-]{20,}|Bearer\s+[A-Za-z0-9._-]+/);
 });
 
+test('workflow references are left for selection by readable name after import', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const expectedNames = new Map([
+    ['Call Error Handler', WF02_WORKFLOW_NAME],
+    ['Call Config Gateway', WF01_WORKFLOW_NAME],
+    ['Call Config Gateway - Command Check', WF01_WORKFLOW_NAME],
+    ['Call Error Handler - Worker Failure', WF02_WORKFLOW_NAME],
+  ]);
+  for (const target of WORKER_TARGETS) expectedNames.set(target.node_name, target.workflow_name);
+  const calls = workflows.flatMap((workflow) => workflow.nodes.filter((node) => node.type === 'n8n-nodes-base.executeWorkflow'));
+
+  assert.equal(calls.length, expectedNames.size);
+  for (const call of calls) {
+    assert.deepEqual(call.parameters.workflowId, { __rl: true, value: '', mode: 'list' });
+    assert.match(call.notes, new RegExp(`select ${expectedNames.get(call.name)} from the n8n workflow list`, 'i'));
+  }
+});
+
 test('exports every IF node with the n8n v2 conditions schema', async () => {
   const workflows = await loadGeneratedWorkflows();
   const ifNodes = workflows.flatMap((workflow) => workflow.nodes.filter((node) => node.type === 'n8n-nodes-base.if'));
@@ -58,19 +82,23 @@ test('exports every IF node with the n8n v2 conditions schema', async () => {
   }
 });
 
-test('exports the current n8n Cloud workflow dependencies without manual placeholders', async () => {
+test('exports workflow dependencies as named list selections, not saved workspace IDs', async () => {
   const workflows = await loadGeneratedWorkflows();
   const text = JSON.stringify(workflows);
-  assert.doesNotMatch(text, /PASTE_WF0[12]_WORKFLOW_ID/);
+  assert.doesNotMatch(text, /WEL83s9bZeB3ixxF|MoG6coBccYkIS0nK/);
 
   const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
   const errorCall = gateway.nodes.find((node) => node.name === 'Call Error Handler');
-  assert.equal(errorCall.parameters.workflowId?.value, WF02_WORKFLOW_ID);
+  assert.equal(errorCall.parameters.workflowId?.value, '');
+  assert.equal(errorCall.parameters.workflowId?.mode, 'list');
+  assert.ok(errorCall.notes.includes(WF02_WORKFLOW_NAME));
 
   const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
   for (const name of ['Call Config Gateway', 'Call Config Gateway - Command Check']) {
     const gatewayCall = router.nodes.find((node) => node.name === name);
-    assert.equal(gatewayCall.parameters.workflowId?.value, WF01_WORKFLOW_ID);
+    assert.equal(gatewayCall.parameters.workflowId?.value, '');
+    assert.equal(gatewayCall.parameters.workflowId?.mode, 'list');
+    assert.ok(gatewayCall.notes.includes(WF01_WORKFLOW_NAME));
   }
 });
 
@@ -96,7 +124,7 @@ test('keeps live configuration reads behind the Config Gateway', async () => {
   assert.equal(router.nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheets' && node.parameters.operation === 'read').length, 0);
   const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
   const reads = gateway.nodes.filter((node) => node.name.startsWith('Read '));
-  assert.equal(reads.length, 16);
+  assert.equal(reads.length, 17);
   assert.ok(gateway.nodes.some((node) => node.name === 'Router tables requested?'));
   for (const sheet of ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG']) {
     const selector = gateway.nodes.find((node) => node.name === `Router sheet ${sheet} requested?`);
@@ -105,9 +133,35 @@ test('keeps live configuration reads behind the Config Gateway', async () => {
   }
   assert.ok(reads.every((node) => node.alwaysOutputData === true));
   assert.ok(reads.every((node) => node.executeOnce === true));
-  assert.deepEqual(gateway.connections['Router sheet EVENT_LOG requested?'].main[1].map((target) => target.node), ['Assemble Config Tables']);
-  assert.deepEqual(gateway.connections['Read EVENT_LOG'].main[0].map((target) => target.node), ['Assemble Config Tables']);
+  assert.deepEqual(gateway.connections['Router sheet EVENT_LOG requested?'].main[1].map((target) => target.node), ['Resolve Retry Context Lookup']);
+  assert.deepEqual(gateway.connections['Read EVENT_LOG'].main[0].map((target) => target.node), ['Resolve Retry Context Lookup']);
   assert.deepEqual(gateway.connections['Execute Workflow Trigger'].main[0].map((target) => target.node), ['Read CONFIG_SCHEMA']);
+});
+
+test('Gateway resolves the latest error operation before a filtered retry-context read', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  const resolver = gateway.nodes.find((node) => node.name === 'Resolve Retry Context Lookup');
+  const read = gateway.nodes.find((node) => node.name === 'Read RETRY_CONTEXT');
+  assert.ok(resolver);
+  assert.equal(read?.parameters.filtersUI.values[0].lookupColumn, 'operation_id');
+  assert.equal(read?.parameters.filtersUI.values[0].lookupValue, '={{$json.operation_id}}');
+  const trigger = { envelope: { payload: { command: '/retry', args: ['err-42'], required_sheet_names: ['RETRY_CONTEXT'] } } };
+  const errors = [
+    { error_id: 'err-42', operation_id: 'op-old' },
+    { error_id: 'err-other', operation_id: 'op-unrelated' },
+    { error_id: 'err-42', operation_id: 'op-latest' },
+  ];
+  const sandbox = { $: (name) => ({
+    first: () => ({ json: name === 'Execute Workflow Trigger' ? trigger : {} }),
+    all: () => name === 'Read ERROR_BIA' ? errors.map((json) => ({ json })) : [],
+  }) };
+  vm.createContext(sandbox);
+  const output = await vm.runInContext(`(async () => { ${resolver.parameters.jsCode}\n})()`, sandbox, { timeout: 1000 });
+  assert.equal(output[0].json.operation_id, 'op-latest');
+  assert.equal(output[0].json.retry_context_requested, true);
+  trigger.envelope.payload.command = '/help';
+  assert.equal((await vm.runInContext(`(async () => { ${resolver.parameters.jsCode}\n})()`, sandbox, { timeout: 1000 }))[0].json.retry_context_requested, false);
 });
 
 test('does not dereference optional router reads that were skipped', async () => {
@@ -197,6 +251,79 @@ test('generated Config Gateway keeps Google Sheets metadata out of snapshot cell
   assert.ok(snapshotPayload.length < 50000);
 });
 
+test('Gateway artifact selects a single retry context read only for /retry and redacts saved executions', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
+  assert.equal(gateway.settings.redactionPolicy, 'all');
+  const selector = gateway.nodes.find((node) => node.name === 'Retry context requested?');
+  const read = gateway.nodes.find((node) => node.name === 'Read RETRY_CONTEXT');
+  assert.ok(selector);
+  assert.ok(read);
+  assert.equal(read.executeOnce, true);
+  assert.equal(read.alwaysOutputData, true);
+  assert.equal(read.parameters.sheetName.value, 'RETRY_CONTEXT');
+  assert.match(JSON.stringify(read.parameters), /operation_id/);
+  assert.deepEqual(gateway.connections[selector.name].main[0].map((target) => target.node), [read.name]);
+  assert.deepEqual(gateway.connections[selector.name].main[1].map((target) => target.node), ['Assemble Config Tables']);
+  assert.deepEqual(gateway.connections[read.name].main[0].map((target) => target.node), ['Assemble Config Tables']);
+});
+
+test('generated Router Decision executes with the no-permission help label in an n8n-like sandbox', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  const decision = router.nodes.find((node) => node.name === 'Router Decision');
+  const update = {
+    update_id: 9001,
+    message: { from: { id: '10001' }, chat: { id: '-100100' }, message_thread_id: '77', text: '/help' },
+  };
+  const normalized = normalizeTelegramUpdate(update);
+  normalized.envelope.payload.required_sheet_names = requiredSheetNames('/help');
+  const gatewayResult = evaluateConfigGateway({ envelope: normalized.envelope, tables: validConfigWithRouterTables(), now: FIXED_NOW });
+  const sandbox = {
+    $input: { first: () => ({ json: gatewayResult }) },
+    $: () => ({ first: () => ({ json: normalized }) }),
+  };
+
+  vm.createContext(sandbox);
+  const output = await vm.runInContext(`(() => { ${decision.parameters.jsCode}\n})()`, sandbox, { timeout: 1000 });
+
+  assert.match(output[0].json.text, /Quyền: Không yêu cầu/);
+
+  const routeUpdate = {
+    update_id: 9002,
+    message: { from: { id: '10001' }, chat: { id: '-100100' }, message_thread_id: '77', text: '/kiemke' },
+  };
+  const routeNormalized = normalizeTelegramUpdate(routeUpdate);
+  routeNormalized.envelope.payload.required_sheet_names = requiredSheetNames('/kiemke');
+  const routeGatewayResult = evaluateConfigGateway({ envelope: routeNormalized.envelope, tables: validConfigWithRouterTables(), now: FIXED_NOW });
+  const routeSandbox = {
+    $input: { first: () => ({ json: routeGatewayResult }) },
+    $: () => ({ first: () => ({ json: routeNormalized }) }),
+  };
+  vm.createContext(routeSandbox);
+  const routeOutput = await vm.runInContext(`(() => { ${decision.parameters.jsCode}\n})()`, routeSandbox, { timeout: 1000 });
+
+  assert.equal(routeOutput[0].json.decision.kind, 'ROUTE');
+  assert.equal(routeOutput[0].json.decision.reservation.row.operation_id, 'router-tg-9002');
+
+  const retryUpdate = {
+    update_id: 9003,
+    message: { from: { id: 'admin-1' }, chat: { id: '-100100' }, message_thread_id: '77', text: '/retry err-42' },
+  };
+  const retryNormalized = normalizeTelegramUpdate(retryUpdate);
+  retryNormalized.envelope.payload.required_sheet_names = requiredSheetNames('/retry');
+  const retryGatewayResult = evaluateConfigGateway({ envelope: retryNormalized.envelope, tables: validConfigWithRouterTables(), now: FIXED_NOW });
+  const retrySandbox = {
+    $input: { first: () => ({ json: retryGatewayResult }) },
+    $: () => ({ first: () => ({ json: retryNormalized }) }),
+  };
+  vm.createContext(retrySandbox);
+  const retryOutput = await vm.runInContext(`(() => { ${decision.parameters.jsCode}\n})()`, retrySandbox, { timeout: 1000 });
+
+  assert.equal(retryOutput[0].json.decision.kind, 'DENY');
+  assert.equal(retryOutput[0].json.decision.reservation, undefined);
+});
+
 test('generated Config Gateway packs oversized snapshots below the Sheets cell limit', async () => {
   const workflows = await loadGeneratedWorkflows();
   const gateway = workflows.find((workflow) => workflow.name === 'WF01_V2_CONFIG_GATEWAY');
@@ -241,7 +368,7 @@ test('WF03 carries router table requests and keeps command policy Sheet-driven',
   assert.ok(normalize.parameters.jsCode.includes('requiredSheetNames(normalized.command)'));
   assert.ok(normalize.parameters.jsCode.includes('const HELP_ROUTER_SHEETS = Object.freeze(['));
   assert.ok(normalize.parameters.jsCode.includes("if (normalized === '/help') return [...HELP_ROUTER_SHEETS]"));
-  assert.doesNotMatch(JSON.stringify(router), /WF05_V2_MO_PHIEN_KIEM_KE|KIEM_KE_WRITE/);
+  assert.doesNotMatch(JSON.stringify(router), /KIEM_KE_WRITE/);
   assert.ok(router.nodes.some((node) => node.name === 'Append EVENT_LOG'));
   assert.ok(router.nodes.some((node) => node.name === 'Append OPERATION reservation'));
   assert.ok(router.nodes.some((node) => node.name === 'Split Router Reply'));
@@ -263,4 +390,45 @@ test('WF03 preserves the reply after audit writes and acknowledges callback quer
   assert.equal(callback.parameters.resource, 'callback');
   assert.equal(callback.parameters.operation, 'answerQuery');
   assert.deepEqual(router.connections['Normalize Telegram Update'].main[0].map((target) => target.node), ['Status command?', 'Callback query?']);
+});
+
+test('WF03 invokes a selected worker with only the standard envelope and handles child errors', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  const prepare = router.nodes.find((node) => node.name === 'Prepare Worker Dispatch');
+  assert.ok(prepare);
+  assert.doesNotMatch(prepare.parameters.jsCode, /decision\.kind === 'RETRY'/);
+  assert.match(prepare.parameters.jsCode, /command\?\.worker_target \?\? command\?\.worker_workflow/);
+  const routeCheck = router.nodes.find((node) => node.name === 'Route reservation required?');
+  assert.match(routeCheck.parameters.conditions.conditions[0].leftValue, /decision\?\.kind === 'ROUTE'/);
+  assert.doesNotMatch(routeCheck.parameters.conditions.conditions[0].leftValue, /RETRY/);
+
+  for (const target of WORKER_TARGETS) {
+    const call = router.nodes.find((node) => node.name === target.node_name);
+    const projection = router.nodes.find((node) => node.name === `Project Standard Envelope ${target.workflow_name}`);
+    const check = router.nodes.find((node) => node.name === `Worker target ${target.workflow_name}?`);
+    assert.ok(call, `missing call for ${target.workflow_name}`);
+    assert.equal(call.onError, 'continueErrorOutput');
+    assert.ok(projection, `missing envelope projection for ${target.workflow_name}`);
+    assert.match(projection.parameters.jsCode, /return \[\{ json: envelope \}\]/);
+    assert.deepEqual(router.connections[check.name].main[0].map((targetNode) => targetNode.node), [projection.name]);
+    assert.deepEqual(router.connections[projection.name].main[0].map((targetNode) => targetNode.node), [call.name]);
+    assert.deepEqual(router.connections[call.name].main[0].map((targetNode) => targetNode.node), ['Worker result successful?']);
+    assert.deepEqual(router.connections[call.name].main[1].map((targetNode) => targetNode.node), ['Prepare Worker Error Handler Input']);
+  }
+
+  const projectReservation = router.nodes.find((node) => node.name === 'Project OPERATION reservation');
+  assert.match(projectReservation.parameters.jsCode, /decision\?\.reservation/);
+  assert.doesNotMatch(projectReservation.parameters.jsCode, /RETRY/);
+  const workerResultCheck = router.nodes.find((node) => node.name === 'Worker result successful?');
+  assert.ok(workerResultCheck);
+  assert.match(workerResultCheck.parameters.conditions.conditions[0].leftValue, /\$json\.ok === true/);
+  assert.deepEqual(router.connections['Worker result successful?'].main[0].map((target) => target.node), ['Prepare Worker Success Reservation']);
+  assert.deepEqual(router.connections['Worker result successful?'].main[1].map((target) => target.node), ['Prepare Worker Error Handler Input']);
+  const prepareSuccess = router.nodes.find((node) => node.name === 'Prepare Worker Success Reservation');
+  assert.match(prepareSuccess.parameters.jsCode, /result\.ok === true \? 'COMMITTED' : 'FAILED'/);
+  assert.deepEqual(router.nodes.find((node) => node.name === 'Call Error Handler - Worker Failure').parameters.workflowId, { __rl: true, value: '', mode: 'list' });
+  assert.deepEqual(router.connections['Append OPERATION reservation'].main[0].map((target) => target.node), ['Prepare Worker Dispatch']);
+  assert.ok(router.nodes.some((node) => node.name === 'Commit Router Dispatch Reservation' && node.parameters.columns.matchingColumns[0] === 'idempotency_key'));
+  assert.ok(router.nodes.some((node) => node.name === 'Fail Router Dispatch Reservation' && node.parameters.columns.matchingColumns[0] === 'idempotency_key'));
 });

@@ -7,10 +7,10 @@ Tài liệu này là handoff triển khai cho PR của issue #3. Nó không ch�
 - WF03 là Telegram ingress duy nhất và nhận `message`, `edited_message`, `callback_query`.
 - Mỗi update được chuẩn hóa thành envelope có `request_id=operation_id=tg-<update_id>`; callback, bot suffix, tham số và forum thread được giữ lại. Actor của callback lấy từ `callback_query.from`, không lấy sender của message chứa nút. Callback có thêm `payload.idempotency_key=tg-callback-<callback_id>` để chống xử lý lặp khi Telegram phát lại với `update_id` khác.
 - Config Gateway đọc thêm sáu tab router khi request không phải `/trangthai`: `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_TOPIC`, `CONFIG_LENH`, và đọc `EVENT_LOG` để ghi access-denied audit.
-- Router trả quyết định thuần (`STATUS`, `HELP`, `ROUTE`, `RETRY`, `DENY`) trước khi một worker được gọi. Workflow export không chứa danh sách role, permission, topic, worker hoặc command nghiệp vụ.
+- Router trả quyết định thuần (`STATUS`, `HELP`, `ROUTE`, `DENY`) trước khi một worker được gọi. Nhánh thực thi retry trong artifact chưa khả dụng vì thiếu payload gốc; `/retry` bị ẩn khỏi `/help` và fail-closed. Workflow export không chứa danh sách role, permission, topic, worker hoặc command nghiệp vụ.
 - `/help` lấy lệnh active từ `CONFIG_LENH`, sắp theo `ordinal`, hiển thị command, cú pháp, mô tả, quyền và ví dụ.
 - `/trangthai` vẫn là đường đọc trạng thái cho user active; user unknown/inactive nhận cùng một denial an toàn.
-- `/retry <error_id>` chỉ nhận lỗi retryable và giữ lại `operation_id` cùng `request_id`/idempotency key ban đầu.
+- `/retry <error_id>` chưa khả dụng: WF03 từ chối an toàn bằng `ERROR_RETRY_CONTEXT_MISSING` khi không truy xuất được payload nghiệp vụ gốc và không quảng bá lệnh này trong `/help`. Không dựng lại một lệnh rỗng.
 - Access-denied audit dùng `event_id` xác định theo idempotency key và không append lần hai cho cùng một update/callback.
 - WF03 tạo reservation `OPERATION` trạng thái `PREPARED` trước ACK cho route; node Google Sheets dùng `appendOrUpdate` theo `idempotency_key`, lần lặp kiểm tra cả `PREPARED` và `COMMITTED`. Access audit dùng `appendOrUpdate` theo `event_id`.
 - WF03 khôi phục `reply_target`/`text` sau khi ghi `EVENT_LOG` hoặc reservation; `/help` dài được chia thành nhiều tin nhắn Telegram để không cắt mất lệnh. Callback query được node `Answer Telegram Callback` xác nhận bằng Telegram `answerQuery`.
@@ -33,6 +33,8 @@ Tạo thêm tab vận hành `EVENT_LOG` để audit truy cập bị từ chối:
 
 `event_id`, `event_type`, `request_id`, `operation_id`, `actor_user_id`, `branch_id`, `topic_type`, `command`, `outcome`, `error_code`, `created_at`, `trang_thai`.
 
+Thay đổi cột ERROR_BIA đã chuẩn bị riêng trong [`issue-3-error-bia-optional-columns.csv`](issue-3-error-bia-optional-columns.csv) chỉ gồm `branch_id` và `idempotency_key`. Đây là file mẫu để người vận hành chép thêm header và đăng ký đúng hai cột trong `CONFIG_SCHEMA`; không import file này như một tab thay thế, không sửa Sheet live trong lúc test. Hai cột này không lưu payload gốc nên không làm `/retry` hoạt động. ADR 0005 vẫn yêu cầu retry đúng thao tác gốc; với lựa chọn hiện tại, đây là blocker chưa giải quyết, không phải lý do để nới điều kiện an toàn.
+
 Quy tắc dữ liệu:
 
 1. Mã máy dùng chữ in hoa ASCII; nhãn tiếng Việt chỉ dùng để hiển thị/dropdown.
@@ -41,7 +43,7 @@ Quy tắc dữ liệu:
 4. User phải tồn tại và `ACTIVE` trong `CONFIG_USER`; user unknown/inactive bị từ chối cùng một thông báo chung.
 5. Mỗi command cần một dòng `CONFIG_LENH`. Lệnh cần quyền phải có mapping qua `CONFIG_ROLE_PERMISSION` tới permission `ACTIVE`.
 6. Topic cần khớp chính xác `chat_id`, `message_thread_id` và `topic_type`; không dùng dòng wildcard thread để suy đoán topic từ tên hiển thị.
-7. `/trangthai` và `/help` có thể để `permission_code` trống. `/retry` yêu cầu permission `ADMIN_RETRY` và role admin có branch `*`.
+7. `/trangthai` và `/help` có thể để `permission_code` trống; `/help` hiển thị `Quyền: Không yêu cầu` cho các lệnh này. `/retry` lấy permission từ `CONFIG_LENH` và kiểm tra qua các permission/role mapping ACTIVE, không hard-code role `ADMIN`. Trong forum topic, assignment phải là `*` hoặc trùng branch của topic; nếu không xác định được topic thì chỉ assignment `*` được retry.
 8. Sau khi thêm sáu tab, thêm schema rule tương ứng vào `CONFIG_SCHEMA`; tăng `config_version` (ví dụ `v1.1`) và ghi chú thay đổi trong `CONFIG_VERSION`.
 9. Thêm schema rule cho `EVENT_LOG`; không sửa trực tiếp các dòng audit đã commit.
 
@@ -74,9 +76,12 @@ Ghi execution ID và Telegram message ID, không ghi giá trị bí mật:
 | User unknown hoặc inactive | Không thực hiện worker/write plan; reply denial giống nhau |
 | `/kiemke` có role + topic hợp lệ | `decision.kind=ROUTE`, đúng `topic_type`, `branch_id`, `worker_workflow`, operation/idempotency key |
 | `/kiemke` sai topic/quyền | `decision.kind=DENY`, không gọi worker |
+| `/retry` khi chỉ có branch/idempotency keys | Từ chối an toàn `ERROR_RETRY_CONTEXT_MISSING`; không gọi worker, không tạo reservation |
+| `/retry` bởi role thiếu mapping hoặc sai branch | `DENY`, không tiết lộ thông tin lỗi |
+| `/help` với lệnh không có permission | Hiện `Quyền: Không yêu cầu` |
 | Gửi lại cùng `update_id` | Cùng operation/idempotency key, không tạo business effect thứ hai |
 | Gửi lại cùng callback ID nhưng `update_id` khác | Không route lần hai; cùng `payload.idempotency_key` |
-| `/retry <error_id>` retryable bởi ADMIN | Giữ operation/idempotency key gốc |
+| `/retry <error_id>` khi không truy xuất được payload gốc | Từ chối an toàn; giữ nguyên dữ liệu nguồn và không tạo tác động nghiệp vụ |
 | `/retry` non-retryable hoặc không phải ADMIN | Denial an toàn, không retry |
 | Callback ID lặp với `update_id` khác | Không tạo reservation thứ hai; Telegram nhận `answerQuery` |
 

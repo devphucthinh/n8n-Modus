@@ -16,7 +16,7 @@ const readRows = (name) => {
     return [];
   }
 };
-const tables = assembled.tables ?? Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'].map((name) => [name, readRows(name)]));
+const tables = assembled.tables ?? Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG', 'RETRY_CONTEXT'].map((name) => [name, readRows(name)]));
 const envelope = normalizeEnvelope(assembled.envelope ?? triggerInput.envelope ?? triggerInput);
 const decision = evaluateConfigGateway({ envelope, tables, now: new Date().toISOString() });
 return [{ json: decision }];
@@ -33,8 +33,24 @@ const readRows = (name) => {
     return [];
   }
 };
-const tables = Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'].map((name) => [name, readRows(name)]));
+const tables = Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG', 'RETRY_CONTEXT'].map((name) => [name, readRows(name)]));
 return [{ json: { envelope: triggerInput.envelope ?? triggerInput, tables } }];
+`);
+}
+
+export function retryContextLookupCode() {
+  return codeNode(`
+const input = $('Execute Workflow Trigger').first()?.json ?? {};
+const payload = (input.envelope ?? input).payload ?? {};
+const requested = String(payload.command ?? '').trim().toLowerCase() === '/retry'
+  && Array.isArray(payload.required_sheet_names)
+  && payload.required_sheet_names.includes('RETRY_CONTEXT');
+const errorId = String(payload.error_id ?? payload.args?.[0] ?? '').trim();
+let errorRows = [];
+try { errorRows = $('Read ERROR_BIA').all().map((item) => item.json); } catch { /* no matching error */ }
+const latestError = errorId ? errorRows.filter((row) => String(row.error_id ?? '').trim() === errorId).at(-1) : null;
+const operationId = String(latestError?.operation_id ?? '').trim();
+return [{ json: { operation_id: operationId, retry_context_requested: Boolean(requested && errorId && operationId) } }];
 `);
 }
 
@@ -59,6 +75,9 @@ return [{ json: {
     request_id: envelope.request_id,
     operation_id: envelope.operation_id,
     workflow: 'WF01_V2_CONFIG_GATEWAY',
+    config_version: envelope.config_version,
+    branch_id: envelope.branch_id,
+    idempotency_key: envelope.payload?.idempotency_key,
   },
   reply_target: triggerInput.reply_target ?? null,
 } }];

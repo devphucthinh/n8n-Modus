@@ -1,17 +1,16 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gatewayCode, assembleCode, planRowCode, errorInputCode } from '../workflow-src/WF01_V2_CONFIG_GATEWAY.mjs';
+import { gatewayCode, assembleCode, retryContextLookupCode, planRowCode, errorInputCode } from '../workflow-src/WF01_V2_CONFIG_GATEWAY.mjs';
 import { errorCode, errorRowCode, returnErrorCode } from '../workflow-src/WF02_V2_ERROR_HANDLER.mjs';
 import { normalizeCode, decisionCode } from '../workflow-src/WF03_V2_TELEGRAM_ROUTER.mjs';
+import { availableWorkerTargets } from '../src/telegram-router/worker-targets.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(root, 'workflows');
 const CORE_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA'];
 const ROUTER_SHEETS = ['CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'];
 const GOOGLE_SHEET_ID = '1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4';
-const WF01_WORKFLOW_ID = 'WEL83s9bZeB3ixxF';
-const WF02_WORKFLOW_ID = 'MoG6coBccYkIS0nK';
 const GOOGLE_CREDENTIAL = 'GOOGLE_SHEETS_KKB_V2';
 const TELEGRAM_CREDENTIAL = 'TELEGRAM_KKB_V2';
 
@@ -51,6 +50,10 @@ function googleSheetUpdateNode(name, sheetName, matchingColumn, columns = [match
       convertFieldsToString: true,
     },
   });
+}
+
+function workflowListReference() {
+  return { __rl: true, value: '', mode: 'list' };
 }
 
 function executeTrigger(name = 'Execute Workflow Trigger') {
@@ -112,6 +115,13 @@ async function buildGatewayWorkflow() {
     position: pos(760, 520 + index * 90),
     notes: `Read ${sheet} only when required_sheet_names includes this sheet.`,
   }));
+  const resolveRetryContext = node({ name: 'Resolve Retry Context Lookup', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: retryContextLookupCode() }, position: pos(1040, 520), notes: 'Find the latest requested ERROR_BIA row and project only its operation_id.' });
+  const retryContextRequested = node({ name: 'Retry context requested?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{$json.retry_context_requested === true}}'), position: pos(1260, 520) });
+  const readRetryContext = googleSheetNode('Read RETRY_CONTEXT', 'RETRY_CONTEXT', 'read', {
+    filtersUI: { values: [{ lookupColumn: 'operation_id', lookupValue: '={{$json.operation_id}}' }] },
+    options: { returnFirstMatch: true },
+  });
+  readRetryContext.position = pos(1480, 520);
   const assemble = node({ name: 'Assemble Config Tables', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await assembleCode() }, position: pos(560, 0) });
   const decision = node({ name: 'Evaluate Config Gateway', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await gatewayCode() }, position: pos(820, 0) });
   const routerRequested = node({ name: 'Router tables requested?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{Array.isArray($('Execute Workflow Trigger').first()?.json?.envelope?.payload?.required_sheet_names) && $('Execute Workflow Trigger').first().json.envelope.payload.required_sheet_names.length > 0}}"), position: pos(520, 520), notes: 'Only read router tabs for commands that request them; /trangthai remains compatible with a core-only Sheet.' });
@@ -131,8 +141,8 @@ async function buildGatewayWorkflow() {
   commitOperation.position = pos(3250, -100);
   const returnStatus = node({ name: 'Return Gateway Result', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const input = $input.first()?.json ?? {}; if (input.reply_target?.chat_id && input.response?.message_safe) return []; const result = $('Evaluate Config Gateway').first()?.json ?? {}; return [{ json: result }];" }, position: pos(3490, -100) });
   const errorInput = node({ name: 'Prepare Error Handler Input', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: errorInputCode() }, position: pos(1570, 180) });
-  const errorCall = node({ name: 'Call Error Handler', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF02_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(1810, 180), notes: 'Bound to WF02_V2_ERROR_HANDLER in the current n8n Cloud project.' });
-  const nodes = [trigger, ...reads, routerRequested, ...routerSelectors, ...routerReads, assemble, decision, branch, writeRequired, prepareOperationRow, prepareOperation, prepareSnapshotRow, prepareSnapshot, commitSnapshotRow, commitSnapshot, commitOperationRow, commitOperation, returnStatus, errorInput, errorCall];
+  const errorCall = node({ name: 'Call Error Handler', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: workflowListReference(), options: { waitForSubWorkflow: true } }, position: pos(1810, 180), notes: 'After import, select WF02_V2_ERROR_HANDLER from the n8n workflow list.' });
+  const nodes = [trigger, ...reads, routerRequested, ...routerSelectors, ...routerReads, resolveRetryContext, retryContextRequested, readRetryContext, assemble, decision, branch, writeRequired, prepareOperationRow, prepareOperation, prepareSnapshotRow, prepareSnapshot, commitSnapshotRow, commitSnapshot, commitOperationRow, commitOperation, returnStatus, errorInput, errorCall];
   const connections = {};
   link(connections, trigger.name, reads[0].name);
   for (let index = 0; index < reads.length - 1; index += 1) link(connections, reads[index].name, reads[index + 1].name);
@@ -149,10 +159,14 @@ async function buildGatewayWorkflow() {
       link(connections, read.name, next);
     } else {
       link(connections, selector.name, read.name, 0);
-      link(connections, selector.name, assemble.name, 1);
-      link(connections, read.name, assemble.name);
+      link(connections, selector.name, resolveRetryContext.name, 1);
+      link(connections, read.name, resolveRetryContext.name);
     }
   }
+  link(connections, resolveRetryContext.name, retryContextRequested.name);
+  link(connections, retryContextRequested.name, readRetryContext.name, 0);
+  link(connections, retryContextRequested.name, assemble.name, 1);
+  link(connections, readRetryContext.name, assemble.name);
   link(connections, assemble.name, decision.name);
   link(connections, decision.name, branch.name);
   link(connections, branch.name, writeRequired.name, 0);
@@ -169,7 +183,9 @@ async function buildGatewayWorkflow() {
   link(connections, commitOperation.name, returnStatus.name);
   link(connections, errorInput.name, errorCall.name);
   link(connections, errorCall.name, returnStatus.name);
-  return baseWorkflow('WF01_V2_CONFIG_GATEWAY', nodes, connections);
+  const workflow = baseWorkflow('WF01_V2_CONFIG_GATEWAY', nodes, connections);
+  workflow.settings.redactionPolicy = 'all';
+  return workflow;
 }
 
 async function buildErrorWorkflow() {
@@ -199,23 +215,48 @@ async function buildRouterWorkflow() {
   const trigger = node({ name: 'Telegram Trigger', type: 'n8n-nodes-base.telegramTrigger', typeVersion: 1.2, parameters: { updates: ['message', 'edited_message', 'callback_query'] }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(0, 0) });
   const normalize = node({ name: 'Normalize Telegram Update', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await normalizeCode() }, position: pos(260, -80) });
   const statusCheck = node({ name: 'Status command?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{$json.command === '/trangthai'}}"), position: pos(520, -80) });
-  const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF01_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, -160), notes: 'Bound to WF01_V2_CONFIG_GATEWAY in the current n8n Cloud project.' });
-  const callUnsupportedGateway = node({ name: 'Call Config Gateway - Command Check', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: { __rl: true, value: WF01_WORKFLOW_ID, mode: 'id' }, options: { waitForSubWorkflow: true } }, position: pos(780, 120), notes: 'Reads configured message templates through the current WF01 Config Gateway without invoking a business worker.' });
+  const callGateway = node({ name: 'Call Config Gateway', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: workflowListReference(), options: { waitForSubWorkflow: true } }, position: pos(780, -160), notes: 'After import, select WF01_V2_CONFIG_GATEWAY from the n8n workflow list.' });
+  const callUnsupportedGateway = node({ name: 'Call Config Gateway - Command Check', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: workflowListReference(), options: { waitForSubWorkflow: true } }, position: pos(780, 120), notes: 'After import, select WF01_V2_CONFIG_GATEWAY from the n8n workflow list. Reads configured message templates without invoking a business worker.' });
   const decision = node({ name: 'Router Decision', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: await decisionCode() }, position: pos(1040, -40), notes: 'Reads Sheet-driven roles/permissions/topics/commands and writes denied-access events to EVENT_LOG.' });
-  const routeCheck = node({ name: 'Route reservation required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{$json.decision?.kind === 'ROUTE'}}"), position: pos(1240, -180), notes: 'Reserve the route idempotency key before acknowledging an accepted command.' });
+  const routeCheck = node({ name: 'Route reservation required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{$json.decision?.kind === 'ROUTE'}}"), position: pos(1240, -180), notes: 'Reserve a router-specific idempotency key before invoking a business worker.' });
   const projectReservation = node({ name: 'Project OPERATION reservation', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const reservation = $json.decision?.reservation; if (!reservation?.row) return []; return [{ json: reservation.row }];" }, position: pos(1460, -240) });
   const appendReservation = googleSheetNode('Append OPERATION reservation', 'OPERATION', 'appendOrUpdate', { columns: { mappingMode: 'autoMapInputData', matchingColumns: ['idempotency_key'] } });
   appendReservation.position = pos(1680, -240);
+  const prepareWorkerDispatch = node({ name: 'Prepare Worker Dispatch', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const source = $('Router Decision').first()?.json ?? {}; const decision = source.decision ?? {}; const command = decision.route; const reservation = decision.reservation; const workerTarget = command?.worker_target ?? command?.worker_workflow; if (!command?.envelope || !workerTarget || !reservation?.row) return []; return [{ json: { ...command.envelope, envelope: command.envelope, worker_target: workerTarget, reply_target: source.reply_target, router_text: source.text, messages: source.messages ?? {}, reservation: reservation.row } }];" }, position: pos(1900, -240), notes: 'Projects a clean standard envelope into the child call; router metadata is used only by the parent reply/error path.' });
+  const workerChecks = availableWorkerTargets().map((target, index) => node({
+    name: `Worker target ${target.workflow_name}?`,
+    type: 'n8n-nodes-base.if',
+    typeVersion: 2.2,
+    parameters: booleanIfParameters(`={{$json.worker_target === '${target.workflow_name}'}}`),
+    position: pos(2120 + index * 300, -360),
+    notes: `Dispatches only to the configured target ${target.workflow_name}.`,
+  }));
+  const workerCalls = availableWorkerTargets().map((target, index) => {
+    const call = node({ name: target.node_name, type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: workflowListReference(), options: { waitForSubWorkflow: true } }, position: pos(2340 + index * 300, -480), notes: `After import, select ${target.workflow_name} from the n8n workflow list.` });
+    call.onError = 'continueErrorOutput';
+    return call;
+  });
+  const projectWorkerEnvelopes = availableWorkerTargets().map((target, index) => node({ name: `Project Standard Envelope ${target.workflow_name}`, type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const envelope = $json.envelope; if (!envelope?.request_id || !envelope?.operation_id || !envelope?.payload) return []; return [{ json: envelope }];" }, position: pos(2340 + index * 300, -600), notes: 'The called workflow receives only the standard envelope object.' }));
+  const workerResultCheck = node({ name: 'Worker result successful?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{$json.ok === true}}'), position: pos(3360, -500), notes: 'Only an explicit standard-envelope success may commit the router reservation; returned failures and malformed results go through WF02.' });
+  const prepareWorkerSuccess = node({ name: 'Prepare Worker Success Reservation', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const dispatch = $('Prepare Worker Dispatch').first()?.json ?? {}; const result = $input.first()?.json ?? {}; const reservation = dispatch.reservation ?? {}; return [{ json: { idempotency_key: reservation.idempotency_key, status: result.ok === true ? 'COMMITTED' : 'FAILED', actual_row_count: result.ok === true ? '1' : '0', updated_at: new Date().toISOString(), worker_result: result } }];" }, position: pos(3580, -500) });
+  const commitWorkerReservation = googleSheetUpdateNode('Commit Router Dispatch Reservation', 'OPERATION', 'idempotency_key', ['idempotency_key', 'status', 'actual_row_count', 'updated_at']);
+  commitWorkerReservation.position = pos(3800, -500);
+  const restoreWorkerReply = node({ name: 'Restore Worker Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const source = $('Router Decision').first()?.json ?? {}; const result = $('Prepare Worker Success Reservation').first()?.json?.worker_result ?? {}; const explicit = result.message_safe ?? result.response?.message_safe; const code = /^[A-Z0-9_]+$/.test(String(result.error_code ?? '')) ? String(result.error_code) : 'WORKER_FAILED'; const text = typeof explicit === 'string' && explicit.trim() ? explicit : result.ok === false ? `Không thể hoàn tất thao tác. Mã lỗi: ${code}` : source.text; return [{ json: { ...source, text: String(text ?? '').slice(0, 4096) } }];" }, position: pos(4020, -500), notes: 'Uses only the worker safe message or configured router acknowledgement; raw exception objects are never sent to Telegram.' });
+  const prepareWorkerError = node({ name: 'Prepare Worker Error Handler Input', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const dispatch = $('Prepare Worker Dispatch').first()?.json ?? {}; const item = $input.first()?.json ?? {}; const source = $('Router Decision').first()?.json ?? {}; return [{ json: { error: item.error ?? item, context: { request_id: dispatch.request_id, operation_id: dispatch.operation_id, workflow: dispatch.worker_target, node: 'Execute Sub-workflow', config_version: dispatch.config_version, branch_id: dispatch.branch_id, idempotency_key: dispatch.payload?.idempotency_key }, reply_target: dispatch.reply_target, messages: source.messages ?? {} } }];" }, position: pos(3580, -220) });
+  const callWorkerErrorHandler = node({ name: 'Call Error Handler - Worker Failure', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: { workflowId: workflowListReference(), options: { waitForSubWorkflow: true } }, position: pos(3800, -220), notes: 'After import, select WF02_V2_ERROR_HANDLER from the n8n workflow list.' });
+  const prepareFailedReservation = node({ name: 'Prepare Failed Router Reservation', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const dispatch = $('Prepare Worker Dispatch').first()?.json ?? {}; const reservation = dispatch.reservation ?? {}; return [{ json: { idempotency_key: reservation.idempotency_key, status: 'FAILED', actual_row_count: '0', updated_at: new Date().toISOString() } }];" }, position: pos(4020, -220) });
+  const failWorkerReservation = googleSheetUpdateNode('Fail Router Dispatch Reservation', 'OPERATION', 'idempotency_key', ['idempotency_key', 'status', 'actual_row_count', 'updated_at']);
+  failWorkerReservation.position = pos(4240, -220);
   const auditCheck = node({ name: 'Router audit write required?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters('={{($json.decision?.write_plan?.length ?? 0) > 0}}'), position: pos(1260, 120) });
   const projectAudit = node({ name: 'Project EVENT_LOG row', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const entry = $json.decision?.write_plan?.[0]; if (!entry) return []; return [{ json: entry.row }];" }, position: pos(1480, 120) });
   const appendAudit = googleSheetNode('Append EVENT_LOG', 'EVENT_LOG', 'appendOrUpdate', { columns: { mappingMode: 'autoMapInputData', matchingColumns: ['event_id'] } });
   appendAudit.position = pos(1700, 120);
-  const restoreReply = node({ name: 'Restore Router Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const reply = $('Router Decision').first()?.json ?? {}; return [{ json: reply }];" }, position: pos(1920, 40), notes: 'Restores reply_target/text after Google Sheets replaces the item with the appended row.' });
+  const restoreReply = node({ name: 'Restore Router Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const reply = $('Router Decision').first()?.json ?? {}; return [{ json: reply }];" }, position: pos(4440, 40), notes: 'Restores reply_target/text after Google Sheets replaces the item with the appended row.' });
   const splitReply = node({ name: 'Split Router Reply', type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode: "const source = $json; const chars = Array.from(String(source.text ?? '')); const limit = 4096; if (chars.length === 0) return [{ json: { ...source, text: '' } }]; const chunks = []; for (let index = 0; index < chars.length; index += limit) chunks.push({ json: { ...source, text: chars.slice(index, index + limit).join('') } }); return chunks;" }, position: pos(2140, 40), notes: 'Telegram text limit is technical; preserve every /help line by sending multiple chunks.' });
   const send = node({ name: 'Send Telegram Reply', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'message', operation: 'sendMessage', chatId: '={{$json.reply_target.chat_id}}', text: '={{$json.text}}', additionalFields: { message_thread_id: '={{$json.reply_target.message_thread_id}}' } }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(2360, 40) });
   const callbackCheck = node({ name: 'Callback query?', type: 'n8n-nodes-base.if', typeVersion: 2.2, parameters: booleanIfParameters("={{!!$('Normalize Telegram Update').first()?.json?.callback?.id}}"), position: pos(1540, -40), notes: 'Only callback_query updates need answerQuery; normal messages skip this branch.' });
   const callbackAnswer = node({ name: 'Answer Telegram Callback', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, parameters: { resource: 'callback', operation: 'answerQuery', queryId: "={{$('Normalize Telegram Update').first()?.json?.callback?.id}}", additionalFields: {} }, credentials: { telegramApi: { name: TELEGRAM_CREDENTIAL } }, position: pos(1780, -40), notes: 'Acknowledges the inline-keyboard callback so Telegram clears its loading indicator.' });
-  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, decision, routeCheck, projectReservation, appendReservation, auditCheck, projectAudit, appendAudit, restoreReply, splitReply, send, callbackCheck, callbackAnswer];
+  const nodes = [trigger, normalize, statusCheck, callGateway, callUnsupportedGateway, decision, routeCheck, projectReservation, appendReservation, prepareWorkerDispatch, ...workerChecks, ...projectWorkerEnvelopes, ...workerCalls, workerResultCheck, prepareWorkerSuccess, commitWorkerReservation, restoreWorkerReply, prepareWorkerError, callWorkerErrorHandler, prepareFailedReservation, failWorkerReservation, auditCheck, projectAudit, appendAudit, restoreReply, splitReply, send, callbackCheck, callbackAnswer];
   const connections = {};
   link(connections, trigger.name, normalize.name);
   link(connections, normalize.name, statusCheck.name);
@@ -228,7 +269,24 @@ async function buildRouterWorkflow() {
   link(connections, routeCheck.name, projectReservation.name, 0);
   link(connections, routeCheck.name, auditCheck.name, 1);
   link(connections, projectReservation.name, appendReservation.name);
-  link(connections, appendReservation.name, restoreReply.name);
+  link(connections, appendReservation.name, prepareWorkerDispatch.name);
+  workerChecks.forEach((check, index) => {
+    if (index === 0) link(connections, prepareWorkerDispatch.name, check.name);
+    else link(connections, workerChecks[index - 1].name, check.name, 1);
+    link(connections, check.name, projectWorkerEnvelopes[index].name, 0);
+    link(connections, projectWorkerEnvelopes[index].name, workerCalls[index].name);
+    link(connections, workerCalls[index].name, workerResultCheck.name, 0);
+    link(connections, workerCalls[index].name, prepareWorkerError.name, 1);
+  });
+  link(connections, workerResultCheck.name, prepareWorkerSuccess.name, 0);
+  link(connections, workerResultCheck.name, prepareWorkerError.name, 1);
+  link(connections, workerChecks.at(-1).name, restoreReply.name, 1);
+  link(connections, prepareWorkerSuccess.name, commitWorkerReservation.name);
+  link(connections, commitWorkerReservation.name, restoreWorkerReply.name);
+  link(connections, restoreWorkerReply.name, splitReply.name);
+  link(connections, prepareWorkerError.name, callWorkerErrorHandler.name);
+  link(connections, callWorkerErrorHandler.name, prepareFailedReservation.name);
+  link(connections, prepareFailedReservation.name, failWorkerReservation.name);
   link(connections, auditCheck.name, projectAudit.name, 0);
   link(connections, auditCheck.name, restoreReply.name, 1);
   link(connections, projectAudit.name, appendAudit.name);

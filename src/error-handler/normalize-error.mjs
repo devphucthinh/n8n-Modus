@@ -55,6 +55,8 @@ export function normalizeWorkflowError({ error = {}, context = {}, messages = {}
     workflow: context.workflow,
     node: context.node,
     config_version: context.config_version,
+    branch_id: context.branch_id,
+    idempotency_key: context.idempotency_key,
   });
   const errorCode = classifyCode(error);
   const retryable = classifyRetryable(errorCode, error);
@@ -83,6 +85,8 @@ export function normalizeWorkflowError({ error = {}, context = {}, messages = {}
     operation_id: cap(context.operation_id),
     request_id: cap(context.request_id),
     config_version: cap(context.config_version),
+    branch_id: cap(context.branch_id),
+    idempotency_key: cap(context.idempotency_key),
     fingerprint,
     status: 'OPEN',
     created_at: cap(now),

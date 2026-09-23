@@ -1,4 +1,4 @@
-import { ALL_SHEET_DEFINITIONS, AUDIT_SHEET_NAMES, CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, ROUTER_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
+import { ALL_SHEET_DEFINITIONS, AUDIT_SHEET_NAMES, CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, OPERATIONAL_SHEET_DEFINITIONS, ROUTER_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
 import { sha256 } from './sha256.mjs';
 
 const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', ...ROUTER_SHEET_NAMES];
@@ -129,7 +129,9 @@ function requestedSheetNames(envelope) {
 
 function validateRequestedTables(tables, envelope, requested) {
   for (const sheetName of requested) {
-    if (![...ROUTER_SHEET_NAMES, ...AUDIT_SHEET_NAMES].includes(sheetName)) {
+    const retryContextAllowed = sheetName === 'RETRY_CONTEXT'
+      && asText(envelope?.payload?.command).toLowerCase() === '/retry';
+    if (![...ROUTER_SHEET_NAMES, ...AUDIT_SHEET_NAMES].includes(sheetName) && !retryContextAllowed) {
       return makeFailure('CONFIG_SHEET_NOT_ALLOWED', `Unsupported requested configuration sheet ${sheetName}`, envelope, { sheet_name: sheetName });
     }
     const rows = tableRows(tables, sheetName);
@@ -376,7 +378,7 @@ function configuredMessages(tables) {
 }
 
 function requestedConfigTables(tables, requested) {
-  return Object.fromEntries(requested.map((sheetName) => [sheetName, (tableRows(tables, sheetName) ?? [])
+  return Object.fromEntries(requested.filter((sheetName) => !Object.hasOwn(OPERATIONAL_SHEET_DEFINITIONS, sheetName)).map((sheetName) => [sheetName, (tableRows(tables, sheetName) ?? [])
     .filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE')
     .map((row) => ({ ...row }))]));
 }
@@ -384,14 +386,28 @@ function requestedConfigTables(tables, requested) {
 const CONTEXT_COLUMNS = Object.freeze({
   CONFIG_USER: ['user_id', 'branch_id', 'trang_thai'],
   CONFIG_THONG_BAO: ['message_key', 'message_text', 'locale', 'trang_thai'],
-  ERROR_BIA: ['error_id', 'error_code', 'retryable', 'operation_id', 'request_id', 'status'],
+  ERROR_BIA: ['error_id', 'error_code', 'retryable', 'operation_id', 'request_id', 'config_version', 'branch_id', 'idempotency_key', 'workflow', 'status'],
   OPERATION: ['operation_id', 'request_id', 'operation_type', 'idempotency_key', 'status'],
   EVENT_LOG: ['event_id', 'event_type', 'request_id', 'operation_id', 'command', 'outcome', 'error_code', 'trang_thai'],
+  RETRY_CONTEXT: ['operation_id', 'envelope_version', 'worker_envelope_json', 'envelope_sha256', 'context_status', 'created_at', 'updated_at'],
 });
 
-function contextConfigTables(tables, requested, includeAudit = false) {
-  const entries = requested.length ? Object.entries(CONTEXT_COLUMNS) : includeAudit ? [['EVENT_LOG', CONTEXT_COLUMNS.EVENT_LOG]] : [];
-  return Object.fromEntries(entries.map(([sheetName, columns]) => [sheetName, (tableRows(tables, sheetName) ?? []).map((row) => Object.fromEntries(columns.map((column) => [column, row[column] ?? ''])))]));
+function contextConfigTables(tables, requested, includeAudit = false, envelope = {}) {
+  const retryRequested = requested.includes('RETRY_CONTEXT') && asText(envelope?.payload?.command).toLowerCase() === '/retry';
+  const entries = requested.length
+    ? Object.entries(CONTEXT_COLUMNS).filter(([sheetName]) => sheetName !== 'RETRY_CONTEXT' || retryRequested)
+    : includeAudit ? [['EVENT_LOG', CONTEXT_COLUMNS.EVENT_LOG]] : [];
+  const requestedErrorId = asText(envelope?.payload?.error_id || envelope?.payload?.args?.[0]);
+  const latestError = requestedErrorId
+    ? (tableRows(tables, 'ERROR_BIA') ?? []).filter((row) => asText(row.error_id) === requestedErrorId).at(-1)
+    : null;
+  const operationId = asText(latestError?.operation_id);
+  return Object.fromEntries(entries.map(([sheetName, columns]) => {
+    const rows = sheetName === 'RETRY_CONTEXT'
+      ? operationId ? (tableRows(tables, sheetName) ?? []).filter((row) => asText(row.operation_id) === operationId).slice(0, 1) : []
+      : (tableRows(tables, sheetName) ?? []);
+    return [sheetName, rows.map((row) => Object.fromEntries(columns.map((column) => [column, row[column] ?? ''])))];
+  }));
 }
 
 function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables = {}, contextTables = {} }) {
@@ -428,7 +444,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     if (!result?.ok) {
       result.response = { ...(result.response ?? {}), messages };
       if ((requested.length > 0 || includeAudit) && !result.response.data) {
-        result.response.data = { config_tables: {}, context_tables: contextConfigTables(tables, requested, includeAudit) };
+        result.response.data = { config_tables: {}, context_tables: contextConfigTables(tables, requested.filter((sheetName) => sheetName !== 'RETRY_CONTEXT'), includeAudit, normalizedEnvelope) };
       }
     }
     return result;
@@ -474,7 +490,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   if (operationType === 'COMMAND_NOT_AVAILABLE') {
     return {
       ok: true,
-      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested, false, normalizedEnvelope) }),
       write_plan: [],
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
     };
@@ -482,7 +498,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   if (READ_ONLY_OPERATION_TYPES.has(operationType)) {
     return {
       ok: true,
-      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested, false, normalizedEnvelope) }),
       write_plan: [],
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
     };
@@ -496,7 +512,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     if (sameVersion && sameFingerprint) {
       return {
         ok: true,
-        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested, false, normalizedEnvelope) }),
         write_plan: [],
         diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: true },
       };
@@ -571,7 +587,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   };
   return {
     ok: true,
-    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested, false, normalizedEnvelope) }),
     write_plan: [
       { sheet: 'OPERATION', action: existingOperation ? 'UPSERT' : 'APPEND', row: operationRow },
       { sheet: 'CONFIG_SNAPSHOT', action: snapshotRows.some((row) => asText(row.config_snapshot_id) === snapshotId) ? 'UPSERT' : 'APPEND', row: snapshotRow },

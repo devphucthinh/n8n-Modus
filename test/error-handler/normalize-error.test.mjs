@@ -23,12 +23,14 @@ test('redacts nested secret-like keys and returns a safe error reference', () =>
 test('classifies transient errors as retryable and caps persisted text', () => {
   const result = normalizeWorkflowError({
     error: { code: 'ETIMEDOUT', message: 'x'.repeat(5000) },
-    context: { request_id: 'req-001', operation_id: 'op-001', workflow: 'WF01_V2_CONFIG_GATEWAY', node: 'Google Sheets' },
+    context: { request_id: 'req-001', operation_id: 'op-001', workflow: 'WF01_V2_CONFIG_GATEWAY', node: 'Google Sheets', branch_id: 'CN_HN', idempotency_key: 'tg-callback-1' },
     now: FIXED_NOW,
   });
 
   assert.equal(result.response.retryable, true);
   assert.equal(result.error_row.error_class, 'TRANSIENT');
+  assert.equal(result.error_row.branch_id, 'CN_HN');
+  assert.equal(result.error_row.idempotency_key, 'tg-callback-1');
   assert.ok(result.error_row.message_safe.length <= 256);
   assert.ok(result.error_row.workflow.length <= 256);
 });

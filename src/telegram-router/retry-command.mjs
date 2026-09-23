@@ -1,35 +1,28 @@
-import { hasPermission, hasRole } from './authorize-command.mjs';
+import { authorizeCommand } from './authorize-command.mjs';
 
-const asText = (value) => (value == null ? '' : String(value).trim());
-const failure = (errorCode, errorId) => ({ ok: false, response: { status: 'ERROR', error_code: errorCode, error_id: errorId }, write_plan: [] });
+const retryText = (value) => (value == null ? '' : String(value).trim());
+const retryFailure = (errorCode, errorId) => ({ ok: false, response: { status: 'ERROR', error_code: errorCode, error_id: errorId }, write_plan: [] });
 
-export function planRetry({ actorUserId, errorId, permissionCode, tables, now = new Date().toISOString() } = {}) {
-  const id = asText(errorId);
-  const row = (tables?.ERROR_BIA ?? []).find((candidate) => asText(candidate.error_id) === id && asText(candidate.status).toUpperCase() !== 'RESOLVED');
-  if (!asText(permissionCode)
-    || !hasRole({ actorUserId, roleCode: 'ADMIN', tables, now, branchId: '*' })
-    || !hasPermission({ actorUserId, permissionCode, tables, now, topic: { branch_id: '*' } })) return failure('USER_NOT_AUTHORIZED', `err-${id || 'unknown'}-retry-denied`);
-  if (!row) return failure('ERROR_NOT_FOUND', `err-${id || 'unknown'}-not-found`);
-  if (!['YES', 'TRUE', '1'].includes(asText(row.retryable).toUpperCase())) return failure('ERROR_NOT_RETRYABLE', id);
-  const operationId = asText(row.operation_id);
-  const idempotencyKey = asText(row.request_id) || operationId;
-  return {
-    ok: true,
-    retry: {
-      error_id: id,
-      operation_id: operationId,
-      idempotency_key: idempotencyKey,
-      envelope: {
-        request_id: idempotencyKey,
-        operation_id: operationId,
-        event_type: 'MANUAL_RETRY',
-        actor_user_id: asText(actorUserId),
-        branch_id: null,
-        business_date: null,
-        config_version: asText(row.config_version) || null,
-        payload: { error_id: id, retry_of: operationId, idempotency_key: idempotencyKey },
-      },
-    },
-    write_plan: [],
-  };
+export function planRetry({ actorUserId, errorId, permissionCode, topic = null, tables, now = new Date().toISOString() } = {}) {
+  const id = retryText(errorId);
+  const row = (tables?.ERROR_BIA ?? []).find((candidate) => retryText(candidate.error_id) === id && retryText(candidate.status).toUpperCase() !== 'RESOLVED');
+  const authorizationTopic = topic ?? { branch_id: '*', trang_thai: 'ACTIVE' };
+  const authorization = authorizeCommand({ actorUserId, command: '/retry', topic: authorizationTopic, tables, now });
+  if (!retryText(permissionCode) || !authorization.allowed || authorization.permission_code !== retryText(permissionCode)) return retryFailure('USER_NOT_AUTHORIZED', `err-${id || 'unknown'}-retry-denied`);
+  if (!row) return retryFailure('ERROR_NOT_FOUND', `err-${id || 'unknown'}-not-found`);
+  if (!['YES', 'TRUE', '1'].includes(retryText(row.retryable).toUpperCase())) return retryFailure('ERROR_NOT_RETRYABLE', id);
+  const operationId = retryText(row.operation_id);
+  const originalOperation = (tables?.OPERATION ?? []).find((candidate) => retryText(candidate.operation_id) === operationId);
+  const idempotencyKey = retryText(row.idempotency_key) || retryText(originalOperation?.idempotency_key);
+  const requestId = retryText(row.request_id) || retryText(originalOperation?.request_id);
+  const branchId = retryText(row.branch_id);
+  const branchScopeMismatch = !authorization.global_scope && branchId !== authorization.branch_id;
+  if (!branchId) return retryFailure('ERROR_BRANCH_MISSING', id);
+  if (branchScopeMismatch) return retryFailure('USER_NOT_AUTHORIZED', `err-${id}-retry-branch-denied`);
+  if (!idempotencyKey) return retryFailure('ERROR_IDEMPOTENCY_MISSING', id);
+  if (!operationId || !requestId) return retryFailure('ERROR_RETRY_CONTEXT_MISSING', id);
+  // ERROR_BIA and OPERATION persist identifiers and retryability, not the
+  // original request payload. Reconstructing an empty command here could
+  // replay a different business action, so retry must fail closed.
+  return retryFailure('ERROR_RETRY_CONTEXT_MISSING', id);
 }

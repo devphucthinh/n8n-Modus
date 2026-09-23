@@ -19,7 +19,7 @@ export function formatHelp({ tables, locale = 'vi-VN' } = {}) {
     const example = asText(row.example) || syntax;
     lines.push(`${command} — ${description}`);
     lines.push(`  Cú pháp: ${syntax}`);
-    lines.push(`  Quyền: ${permission}`);
+    lines.push(`  Quyền: ${permission || 'Không yêu cầu'}`);
     lines.push(`  Ví dụ: ${example}`);
   }
   return { text: lines.join('\n') };
