@@ -52,3 +52,31 @@ test('gateway context is projected to the minimum router fields', () => {
   assert.ok(context.OPERATION.every((row) => Object.keys(row).every((key) => ['operation_id', 'request_id', 'operation_type', 'idempotency_key', 'status'].includes(key))));
   assert.equal(Object.values(context).some((rows) => rows.some((row) => 'normalized_config_json' in row)), false);
 });
+
+test('gateway ignores PREPARED router rows in reads and config fingerprints', () => {
+  const request = { ...envelope, payload: { command: '/help', intent: 'READ_HELP', required_sheet_names: ['CONFIG_TOPIC'] } };
+  const withRequiredTopicThread = (tables) => {
+    tables.CONFIG_SCHEMA = tables.CONFIG_SCHEMA.map((row) => row.sheet_name === 'CONFIG_TOPIC' && row.column_name === 'message_thread_id'
+      ? { ...row, required: 'YES' }
+      : row);
+    return tables;
+  };
+
+  const baseline = evaluateConfigGateway({ envelope: request, tables: withRequiredTopicThread(validConfigWithRouterTables()), now: FIXED_NOW });
+  const stagedTables = withRequiredTopicThread(validConfigWithRouterTables());
+  stagedTables.CONFIG_TOPIC.push({
+    topic_id: 'topic-pending',
+    branch_id: 'CN_HN',
+    topic_type: 'KIEM_KE',
+    chat_id: '-100100',
+    message_thread_id: '',
+    trang_thai: 'PREPARED',
+  });
+
+  const result = evaluateConfigGateway({ envelope: request, tables: stagedTables, now: FIXED_NOW });
+
+  assert.equal(baseline.ok, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.response.fingerprint, baseline.response.fingerprint);
+  assert.equal(result.response.data.config_tables.CONFIG_TOPIC.some((row) => row.topic_id === 'topic-pending'), false);
+});

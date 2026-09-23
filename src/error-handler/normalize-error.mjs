@@ -61,7 +61,8 @@ export function normalizeWorkflowError({ error = {}, context = {}, messages = {}
   const errorClass = classifyErrorClass(errorCode, retryable);
   const fingerprint = sha256(JSON.stringify({ error: safeError, context: safeContext }));
   const errorId = `err-${fingerprint.slice(0, 16)}`;
-  const messageSafe = renderMessage(messages.ERROR_GENERIC, errorId);
+  const messageTemplate = messages[error?.message_key] || messages[errorCode] || messages.ERROR_GENERIC;
+  const messageSafe = renderMessage(messageTemplate, errorId);
   const response = {
     ok: false,
     request_id: cap(context.request_id),

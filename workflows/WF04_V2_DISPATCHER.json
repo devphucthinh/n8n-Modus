@@ -168,7 +168,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const ACTIVE = 'ACTIVE';\nconst asText = (value) => (value == null ? '' : String(value).trim());\nconst asNumber = (value, fallback = 0) => {\n  const parsed = Number(value);\n  return Number.isFinite(parsed) ? parsed : fallback;\n};\nconst truthy = (value) => ['YES', 'TRUE', '1', 'ACTIVE'].includes(asText(value).toUpperCase());\nconst localDate = (date, timezone) => {\n  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date).filter(({ type }) => type !== 'literal').map(({ type, value }) => [type, value]));\n  return `${parts.year}-${parts.month}-${parts.day}`;\n};\nconst localParts = (date, timezone) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(date).filter(({ type }) => type !== 'literal').map(({ type, value }) => [type, value]));\nconst shiftDate = (date, amount) => {\n  const shifted = new Date(`${date}T00:00:00.000Z`);\n  shifted.setUTCDate(shifted.getUTCDate() + amount);\n  return shifted.toISOString().slice(0, 10);\n};\n\nfunction toUtc(date, time, timezone) {\n  const [hour, minute] = asText(time).split(':').map(Number);\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(asText(date)) || !Number.isInteger(hour) || !Number.isInteger(minute)) return null;\n  let guess = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), hour, minute, 0);\n  const desired = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), hour, minute, 0);\n  for (let index = 0; index < 3; index += 1) {\n    const parts = localParts(new Date(guess), timezone);\n    const observed = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));\n    guess += desired - observed;\n  }\n  return new Date(guess);\n}\n\nfunction weekdayAllowed(date, timezone, configured) {\n  const days = asText(configured).split(/[|,\\s]+/).map((value) => value.toUpperCase()).filter(Boolean);\n  if (days.length === 0 || days.includes('*')) return true;\n  const weekday = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][date.getUTCDay()];\n  const numeric = String(date.getUTCDay());\n  return days.includes(weekday) || days.includes(numeric);\n}\n\nfunction activeSession(sessions, branchId) {\n  return (sessions ?? []).find((row) => asText(row.branch_id) === asText(branchId) && ['ACTIVE', 'OPEN', 'IN_PROGRESS'].includes(asText(row.status).toUpperCase()));\n}\n\nfunction buildDispatchKey(schedule, businessDate) {\n  return [schedule?.schedule_id, schedule?.branch_id, businessDate].map(asText).join(':');\n}\n\nfunction candidateFor(schedule, now) {\n  const timezone = asText(schedule.timezone);\n  if (!timezone) return null;\n  const instant = new Date(now);\n  if (Number.isNaN(instant.getTime())) return null;\n  const currentDate = localDate(instant, timezone);\n  const dates = [currentDate, shiftDate(currentDate, -1)];\n  const candidates = dates.filter((date) => weekdayAllowed(new Date(`${date}T12:00:00.000Z`), timezone, schedule.days_of_week)).map((businessDate) => {\n    const scheduledAt = toUtc(businessDate, schedule.local_time, timezone);\n    const graceEnd = scheduledAt ? new Date(scheduledAt.getTime() + asNumber(schedule.grace_window_minutes) * 60_000) : null;\n    return { businessDate, scheduledAt, graceEnd };\n  }).filter(({ scheduledAt }) => scheduledAt);\n  const due = candidates.find(({ scheduledAt, graceEnd }) => instant >= scheduledAt && instant <= graceEnd);\n  if (due) return { ...due, state: 'DUE' };\n  const missed = candidates.find(({ scheduledAt, graceEnd }) => instant > graceEnd && scheduledAt <= instant);\n  if (missed) return { ...missed, state: 'OUTSIDE_GRACE_WINDOW' };\n  return null;\n}\n\nfunction historyBlocks(row, schedule, now) {\n  if (!row) return false;\n  const status = asText(row.status).toUpperCase();\n  if (['CLAIMED', 'RUNNING', 'SUCCESS', 'SKIPPED', 'WARNING'].includes(status)) return true;\n  if (status !== 'FAILED') return true;\n  const attempts = asNumber(row.attempt_count, 0);\n  if (attempts >= asNumber(schedule.retry_limit, 0)) return true;\n  const explicitRetryAt = Date.parse(asText(row.retry_at));\n  const updatedAt = Date.parse(asText(row.updated_at));\n  const retryAt = Number.isFinite(explicitRetryAt)\n    ? explicitRetryAt\n    : Number.isFinite(updatedAt) ? updatedAt + asNumber(schedule.retry_delay_minutes) * 60_000 : null;\n  return Number.isFinite(retryAt) && Date.parse(now) < retryAt;\n}\n\nfunction planDispatch({ now = new Date().toISOString(), schedules = [], branches = [], history = [], activeSessions = [], configSnapshotId = null } = {}) {\n  const actions = [];\n  for (const schedule of schedules) {\n    if (!truthy(schedule.enabled) || asText(schedule.trang_thai).toUpperCase() === 'INACTIVE') continue;\n    const candidate = candidateFor(schedule, now);\n    if (!candidate) continue;\n    const dispatchKey = buildDispatchKey(schedule, candidate.businessDate);\n    const previous = (history ?? []).find((row) => asText(row.dispatch_key) === dispatchKey);\n    if (historyBlocks(previous, schedule, now)) continue;\n    if (candidate.state === 'OUTSIDE_GRACE_WINDOW') {\n      actions.push({ kind: 'WARNING', reason: 'OUTSIDE_GRACE_WINDOW', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, scheduled_at: candidate.scheduledAt.toISOString(), config_snapshot_id: configSnapshotId });\n      continue;\n    }\n    const branch = (branches ?? []).find((row) => asText(row.branch_id) === asText(schedule.branch_id));\n    if (!branch || asText(branch.trang_thai).toUpperCase() !== ACTIVE) {\n      actions.push({ kind: 'SKIP', reason: 'BRANCH_INACTIVE', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, config_snapshot_id: configSnapshotId });\n      continue;\n    }\n    const existing = activeSession(activeSessions, schedule.branch_id);\n    if (existing) {\n      actions.push({ kind: 'SKIP', reason: 'ACTIVE_SESSION_EXISTS', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, session_id: asText(existing.session_id), config_snapshot_id: configSnapshotId });\n      continue;\n    }\n    const attemptCount = asNumber(previous?.attempt_count, 0) + 1;\n    actions.push({\n      kind: 'DISPATCH',\n      status: 'CLAIMED',\n      dispatch_key: dispatchKey,\n      schedule_id: asText(schedule.schedule_id),\n      job_code: asText(schedule.job_code),\n      branch_id: asText(schedule.branch_id),\n      business_date: candidate.businessDate,\n      scheduled_at: candidate.scheduledAt.toISOString(),\n      worker_workflow: asText(schedule.worker_workflow),\n      attempt_count: String(attemptCount),\n      retry_delay_minutes: asText(schedule.retry_delay_minutes),\n      retry_limit: asText(schedule.retry_limit),\n      config_snapshot_id: configSnapshotId,\n    });\n  }\n  return { actions };\n}\n\nfunction recordHeartbeat({ now = new Date().toISOString(), previous = {}, failure = false, threshold = null } = {}) {\n  const limit = asNumber(threshold, 0);\n  const oldFailures = asNumber(previous.failure_count, 0);\n  if (failure) {\n    const failureCount = oldFailures + 1;\n    const critical = limit > 0 && failureCount >= limit && asText(previous.critical_notified).toUpperCase() !== 'YES';\n    return { heartbeat_at: now, status: 'FAILED', failure_count: failureCount, threshold: limit, critical_notified: critical || asText(previous.critical_notified).toUpperCase() === 'YES' ? 'YES' : 'NO', notice: critical ? 'CRITICAL' : null };\n  }\n  const recovered = limit > 0 && asText(previous.status).toUpperCase() === 'FAILED' && (asText(previous.critical_notified).toUpperCase() === 'YES' || oldFailures >= limit);\n  return { heartbeat_at: now, status: 'HEALTHY', failure_count: 0, threshold: limit, critical_notified: 'NO', notice: recovered ? 'RECOVERY' : null };\n}\n\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst tables = gateway.response?.data?.config_tables ?? {};\nconst readRows = (name) => {\n  try { return $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); } catch { return []; }\n};\nconst now = new Date().toISOString();\nconst heartbeatRows = readRows('HEARTBEAT').sort((left, right) => String(left.heartbeat_at || '').localeCompare(String(right.heartbeat_at || '')));\nconst threshold = (tables.CONFIG_GLOBAL || []).find((row) => String(row.config_key || '').trim() === 'DISPATCHER_HEARTBEAT_THRESHOLD')?.config_value || null;\nconst heartbeat = recordHeartbeat({ now, previous: heartbeatRows.at(-1) || {}, failure: gateway.ok !== true, threshold });\nconst plan = planDispatch({\n  now,\n  schedules: tables.CONFIG_LICH || [],\n  branches: tables.CONFIG_BRANCH || [],\n  history: readRows('DISPATCH_HISTORY'),\n  activeSessions: readRows('PHIEN_KIEM_KE'),\n  configSnapshotId: gateway.response?.config_snapshot_id || null,\n});\nconst heartbeatItem = { kind: 'HEARTBEAT', heartbeat_id: 'dispatcher-' + now, ...heartbeat };\nreturn [heartbeatItem, ...plan.actions.map((action) => ({ ...action, heartbeat_id: heartbeatItem.heartbeat_id }))].map((json) => ({ json }));"
+        "jsCode": "const ACTIVE = 'ACTIVE';\nconst asText = (value) => (value == null ? '' : String(value).trim());\nconst asNumber = (value, fallback = 0) => {\n  const parsed = Number(value);\n  return Number.isFinite(parsed) ? parsed : fallback;\n};\nconst truthy = (value) => ['YES', 'TRUE', '1', 'ACTIVE'].includes(asText(value).toUpperCase());\nconst localDate = (date, timezone) => {\n  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date).filter(({ type }) => type !== 'literal').map(({ type, value }) => [type, value]));\n  return `${parts.year}-${parts.month}-${parts.day}`;\n};\nconst localParts = (date, timezone) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(date).filter(({ type }) => type !== 'literal').map(({ type, value }) => [type, value]));\nconst shiftDate = (date, amount) => {\n  const shifted = new Date(`${date}T00:00:00.000Z`);\n  shifted.setUTCDate(shifted.getUTCDate() + amount);\n  return shifted.toISOString().slice(0, 10);\n};\n\nfunction toUtc(date, time, timezone) {\n  const [hour, minute] = asText(time).split(':').map(Number);\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(asText(date)) || !Number.isInteger(hour) || !Number.isInteger(minute)) return null;\n  let guess = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), hour, minute, 0);\n  const desired = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), hour, minute, 0);\n  for (let index = 0; index < 3; index += 1) {\n    const parts = localParts(new Date(guess), timezone);\n    const observed = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));\n    guess += desired - observed;\n  }\n  return new Date(guess);\n}\n\nfunction weekdayAllowed(date, timezone, configured) {\n  const days = asText(configured).split(/[|,\\s]+/).map((value) => value.toUpperCase()).filter(Boolean);\n  if (days.length === 0 || days.includes('*')) return true;\n  const weekday = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][date.getUTCDay()];\n  const numeric = String(date.getUTCDay());\n  return days.includes(weekday) || days.includes(numeric);\n}\n\nfunction activeSession(sessions, branchId) {\n  return (sessions ?? []).find((row) => asText(row.branch_id) === asText(branchId) && ['ACTIVE', 'OPEN', 'IN_PROGRESS'].includes(asText(row.status).toUpperCase()));\n}\n\nfunction buildDispatchKey(schedule, businessDate) {\n  return [schedule?.schedule_id, schedule?.branch_id, businessDate].map(asText).join(':');\n}\n\nfunction candidateFor(schedule, now) {\n  const timezone = asText(schedule.timezone);\n  if (!timezone) return null;\n  const instant = new Date(now);\n  if (Number.isNaN(instant.getTime())) return null;\n  const currentDate = localDate(instant, timezone);\n  const dates = [currentDate, shiftDate(currentDate, -1)];\n  const candidates = dates.filter((date) => weekdayAllowed(new Date(`${date}T12:00:00.000Z`), timezone, schedule.days_of_week)).map((businessDate) => {\n    const scheduledAt = toUtc(businessDate, schedule.local_time, timezone);\n    const graceEnd = scheduledAt ? new Date(scheduledAt.getTime() + asNumber(schedule.grace_window_minutes) * 60_000) : null;\n    return { businessDate, scheduledAt, graceEnd };\n  }).filter(({ scheduledAt }) => scheduledAt);\n  const due = candidates.find(({ scheduledAt, graceEnd }) => instant >= scheduledAt && instant <= graceEnd);\n  if (due) return { ...due, state: 'DUE' };\n  const missed = candidates.find(({ scheduledAt, graceEnd }) => instant > graceEnd && scheduledAt <= instant);\n  if (missed) return { ...missed, state: 'OUTSIDE_GRACE_WINDOW' };\n  return null;\n}\n\nfunction historyBlocks(row, schedule, now) {\n  if (!row) return false;\n  const status = asText(row.status).toUpperCase();\n  if (['CLAIMED', 'RUNNING', 'SUCCESS', 'SKIPPED', 'WARNING'].includes(status)) return true;\n  if (status !== 'FAILED') return true;\n  const attempts = asNumber(row.attempt_count, 0);\n  if (attempts >= asNumber(schedule.retry_limit, 0)) return true;\n  const explicitRetryAt = Date.parse(asText(row.retry_at));\n  const updatedAt = Date.parse(asText(row.updated_at));\n  const retryAt = Number.isFinite(explicitRetryAt)\n    ? explicitRetryAt\n    : Number.isFinite(updatedAt) ? updatedAt + asNumber(schedule.retry_delay_minutes) * 60_000 : null;\n  return Number.isFinite(retryAt) && Date.parse(now) < retryAt;\n}\n\nfunction planDispatch({ now = new Date().toISOString(), schedules = [], branches = [], history = [], activeSessions = [], configSnapshotId = null } = {}) {\n  const actions = [];\n  for (const schedule of schedules) {\n    if (!truthy(schedule.enabled) || asText(schedule.trang_thai).toUpperCase() === 'INACTIVE') continue;\n    const candidate = candidateFor(schedule, now);\n    if (!candidate) continue;\n    const dispatchKey = buildDispatchKey(schedule, candidate.businessDate);\n    const previous = (history ?? []).find((row) => asText(row.dispatch_key) === dispatchKey);\n    if (historyBlocks(previous, schedule, now)) continue;\n    if (candidate.state === 'OUTSIDE_GRACE_WINDOW') {\n      actions.push({ kind: 'WARNING', reason: 'OUTSIDE_GRACE_WINDOW', notice_code: 'DISPATCH_OUTSIDE_GRACE_WINDOW', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, scheduled_at: candidate.scheduledAt.toISOString(), config_snapshot_id: configSnapshotId });\n      continue;\n    }\n    const branch = (branches ?? []).find((row) => asText(row.branch_id) === asText(schedule.branch_id));\n    if (!branch || asText(branch.trang_thai).toUpperCase() !== ACTIVE) {\n      actions.push({ kind: 'SKIP', reason: 'BRANCH_INACTIVE', notice_code: 'DISPATCH_BRANCH_INACTIVE', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, config_snapshot_id: configSnapshotId });\n      continue;\n    }\n    const existing = activeSession(activeSessions, schedule.branch_id);\n    if (existing) {\n      actions.push({ kind: 'SKIP', reason: 'ACTIVE_SESSION_EXISTS', notice_code: 'DISPATCH_ACTIVE_SESSION_EXISTS', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, session_id: asText(existing.session_id), config_snapshot_id: configSnapshotId });\n      continue;\n    }\n    const attemptCount = asNumber(previous?.attempt_count, 0) + 1;\n    actions.push({\n      kind: 'DISPATCH',\n      status: 'CLAIMED',\n      dispatch_key: dispatchKey,\n      schedule_id: asText(schedule.schedule_id),\n      job_code: asText(schedule.job_code),\n      branch_id: asText(schedule.branch_id),\n      business_date: candidate.businessDate,\n      scheduled_at: candidate.scheduledAt.toISOString(),\n      worker_workflow: asText(schedule.worker_workflow),\n      attempt_count: String(attemptCount),\n      retry_delay_minutes: asText(schedule.retry_delay_minutes),\n      retry_limit: asText(schedule.retry_limit),\n      config_snapshot_id: configSnapshotId,\n    });\n  }\n  return { actions };\n}\n\nfunction recordHeartbeat({ now = new Date().toISOString(), previous = {}, failure = false, threshold = null } = {}) {\n  const limit = asNumber(threshold, 0);\n  const oldFailures = asNumber(previous.failure_count, 0);\n  if (failure) {\n    const failureCount = oldFailures + 1;\n    const critical = limit > 0 && failureCount >= limit && asText(previous.critical_notified).toUpperCase() !== 'YES';\n    return { heartbeat_at: now, status: 'FAILED', failure_count: failureCount, threshold: limit, critical_notified: critical || asText(previous.critical_notified).toUpperCase() === 'YES' ? 'YES' : 'NO', notice: critical ? 'CRITICAL' : null };\n  }\n  const recovered = limit > 0 && asText(previous.status).toUpperCase() === 'FAILED' && (asText(previous.critical_notified).toUpperCase() === 'YES' || oldFailures >= limit);\n  return { heartbeat_at: now, status: 'HEALTHY', failure_count: 0, threshold: limit, critical_notified: 'NO', notice: recovered ? 'RECOVERY' : null };\n}\n\nconst claimAsText = (value) => (value == null ? '' : String(value).trim());\nconst claimStableId = (prefix, value) => `${prefix}-${claimAsText(value).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n\nfunction prepareDispatchClaim({ action, claimToken, requestId } = {}) {\n  const dispatchKey = claimAsText(action?.dispatch_key);\n  const token = claimAsText(claimToken);\n  if (!dispatchKey || !token) return { ...(action ?? {}), claim_token: token };\n  return {\n    ...(action ?? {}),\n    status: 'CLAIMED',\n    claim_token: token,\n    operation_id: claimAsText(action.operation_id) || claimStableId('op-dispatch', dispatchKey),\n    request_id: claimAsText(requestId) || claimStableId('req-dispatch', `${dispatchKey}:${token}`),\n  };\n}\n\nfunction verifyDispatchClaim({ action, persistedRow } = {}) {\n  const dispatchKey = claimAsText(action?.dispatch_key);\n  const claimToken = claimAsText(action?.claim_token);\n  const row = persistedRow ?? {};\n  return Boolean(\n    dispatchKey &&\n    claimToken &&\n    claimAsText(row.dispatch_key) === dispatchKey &&\n    claimAsText(row.claim_token) === claimToken &&\n    ['CLAIMED', 'RUNNING'].includes(claimAsText(row.status).toUpperCase()),\n  );\n}\n\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst tables = gateway.response?.data?.config_tables ?? {};\nconst readRows = (name) => {\n  try { return $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); } catch { return []; }\n};\nconst now = new Date().toISOString();\nconst executionId = typeof $execution !== 'undefined' && $execution.id ? String($execution.id) : now.replace(/[^0-9]/g, '');\nconst requestEnvelope = $('Prepare Dispatcher Gateway Request').first()?.json?.envelope ?? {};\nconst claimToken = 'claim-' + executionId;\nconst heartbeatRows = readRows('HEARTBEAT').sort((left, right) => String(left.heartbeat_at || '').localeCompare(String(right.heartbeat_at || '')));\nconst threshold = (tables.CONFIG_GLOBAL || []).find((row) => String(row.config_key || '').trim() === 'DISPATCHER_HEARTBEAT_THRESHOLD')?.config_value || null;\nconst heartbeat = recordHeartbeat({ now, previous: heartbeatRows.at(-1) || {}, failure: gateway.ok !== true, threshold });\nconst plan = planDispatch({\n  now,\n  schedules: tables.CONFIG_LICH || [],\n  branches: tables.CONFIG_BRANCH || [],\n  history: readRows('DISPATCH_HISTORY'),\n  activeSessions: readRows('PHIEN_KIEM_KE'),\n  configSnapshotId: gateway.response?.config_snapshot_id || null,\n});\nconst heartbeatItem = { kind: 'HEARTBEAT', heartbeat_id: 'dispatcher-' + now, ...heartbeat };\nconst actions = plan.actions.map((action) => {\n  if (action.kind !== 'DISPATCH') return { ...action, heartbeat_id: heartbeatItem.heartbeat_id };\n  return {\n    ...prepareDispatchClaim({ action, claimToken, requestId: requestEnvelope.request_id }),\n    heartbeat_id: heartbeatItem.heartbeat_id,\n  };\n});\nreturn [heartbeatItem, ...actions].map((json) => ({ json }));"
       },
       "id": "kkb-v2-decide-dispatcher-actions",
       "name": "Decide Dispatcher Actions",
@@ -279,7 +279,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const row = $input.first()?.json ?? {}; const gateway = $('Call Config Gateway').first()?.json ?? {}; const code = 'DISPATCHER_' + String(row.notice || '').toUpperCase(); const messages = gateway.response?.messages || {}; const branch = (gateway.response?.data?.config_tables?.CONFIG_BRANCH || []).find((item) => item.owner_chat_id); return [{json: { error: { error_code: code, error_class: row.notice === 'CRITICAL' ? 'CRITICAL' : 'OPERATIONAL', retryable: false, message_safe: messages[code] || code, operation_id: row.heartbeat_id, request_id: row.heartbeat_id, workflow: 'WF04_V2_DISPATCHER', node: 'Heartbeat', config_version: gateway.response?.config_version || null }, context: { workflow: 'WF04_V2_DISPATCHER', operation_id: row.heartbeat_id, request_id: row.heartbeat_id }, reply_target: branch ? { chat_id: branch.owner_chat_id } : null }}];"
+        "jsCode": "const notificationAsText = (value) => (value == null ? '' : String(value).trim());\n\nfunction configuredValue(rows, key) {\n  return notificationAsText((rows ?? []).find((row) => notificationAsText(row.config_key) === key && notificationAsText(row.trang_thai).toUpperCase() !== 'INACTIVE')?.config_value);\n}\n\nfunction dispatcherNotificationTarget({ configGlobal = [] } = {}) {\n  const chatId = configuredValue(configGlobal, 'DISPATCHER_NOTIFICATION_CHAT_ID');\n  if (!chatId) return null;\n  return {\n    chat_id: chatId,\n    message_thread_id: configuredValue(configGlobal, 'DISPATCHER_NOTIFICATION_THREAD_ID'),\n    branch_id: '',\n  };\n}\n\nfunction buildDispatchNotice({ action = {}, configGlobal = [], messages = {}, configVersion = null } = {}) {\n  const noticeCode = notificationAsText(action.notice_code);\n  if (!noticeCode) return null;\n  const operationId = notificationAsText(action.operation_id) || `op-dispatch-${notificationAsText(action.dispatch_key).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n  const requestId = notificationAsText(action.request_id) || operationId;\n  return {\n    error: {\n      error_code: noticeCode,\n      error_class: 'OPERATIONAL',\n      retryable: false,\n      message_key: noticeCode,\n      message: notificationAsText(messages[noticeCode]) || noticeCode,\n      operation_id: operationId,\n      request_id: requestId,\n      workflow: 'WF04_V2_DISPATCHER',\n      node: 'Dispatcher Decision',\n      config_version: configVersion,\n    },\n    context: {\n      workflow: 'WF04_V2_DISPATCHER',\n      node: 'Dispatcher Decision',\n      operation_id: operationId,\n      request_id: requestId,\n      dispatch_key: notificationAsText(action.dispatch_key),\n      branch_id: notificationAsText(action.branch_id),\n      config_snapshot_id: notificationAsText(action.config_snapshot_id) || null,\n    },\n    messages,\n    reply_target: dispatcherNotificationTarget({ configGlobal }),\n  };\n}\n\nconst input = $input.first()?.json ?? {};\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst tables = gateway.response?.data?.config_tables ?? {};\nconst source = input.notice_code\n  ? input\n  : (() => {\n      try { return $items('Decide Dispatcher Actions').map((item) => item.json).find((row) => row.notice); }\n      catch { return input; }\n    })();\nconst action = source.notice_code\n  ? source\n  : { ...source, notice_code: 'DISPATCHER_' + String(source.notice || '').toUpperCase(), operation_id: source.heartbeat_id, request_id: source.heartbeat_id };\nconst notice = buildDispatchNotice({\n  action,\n  configGlobal: tables.CONFIG_GLOBAL || [],\n  messages: gateway.response?.messages || {},\n  configVersion: gateway.response?.config_version || null,\n});\nreturn notice ? [{ json: notice }] : [];"
       },
       "id": "kkb-v2-prepare-dispatcher-notice",
       "name": "Prepare Dispatcher Notice",
@@ -393,6 +393,72 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{!!$json.notice_code}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-dispatch-notice-required-",
+      "name": "Dispatch notice required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const notificationAsText = (value) => (value == null ? '' : String(value).trim());\n\nfunction configuredValue(rows, key) {\n  return notificationAsText((rows ?? []).find((row) => notificationAsText(row.config_key) === key && notificationAsText(row.trang_thai).toUpperCase() !== 'INACTIVE')?.config_value);\n}\n\nfunction dispatcherNotificationTarget({ configGlobal = [] } = {}) {\n  const chatId = configuredValue(configGlobal, 'DISPATCHER_NOTIFICATION_CHAT_ID');\n  if (!chatId) return null;\n  return {\n    chat_id: chatId,\n    message_thread_id: configuredValue(configGlobal, 'DISPATCHER_NOTIFICATION_THREAD_ID'),\n    branch_id: '',\n  };\n}\n\nfunction buildDispatchNotice({ action = {}, configGlobal = [], messages = {}, configVersion = null } = {}) {\n  const noticeCode = notificationAsText(action.notice_code);\n  if (!noticeCode) return null;\n  const operationId = notificationAsText(action.operation_id) || `op-dispatch-${notificationAsText(action.dispatch_key).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n  const requestId = notificationAsText(action.request_id) || operationId;\n  return {\n    error: {\n      error_code: noticeCode,\n      error_class: 'OPERATIONAL',\n      retryable: false,\n      message_key: noticeCode,\n      message: notificationAsText(messages[noticeCode]) || noticeCode,\n      operation_id: operationId,\n      request_id: requestId,\n      workflow: 'WF04_V2_DISPATCHER',\n      node: 'Dispatcher Decision',\n      config_version: configVersion,\n    },\n    context: {\n      workflow: 'WF04_V2_DISPATCHER',\n      node: 'Dispatcher Decision',\n      operation_id: operationId,\n      request_id: requestId,\n      dispatch_key: notificationAsText(action.dispatch_key),\n      branch_id: notificationAsText(action.branch_id),\n      config_snapshot_id: notificationAsText(action.config_snapshot_id) || null,\n    },\n    messages,\n    reply_target: dispatcherNotificationTarget({ configGlobal }),\n  };\n}\n\nconst input = $input.first()?.json ?? {};\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst tables = gateway.response?.data?.config_tables ?? {};\nconst source = input.notice_code\n  ? input\n  : (() => {\n      try { return $items('Decide Dispatcher Actions').map((item) => item.json).find((row) => row.notice); }\n      catch { return input; }\n    })();\nconst action = source.notice_code\n  ? source\n  : { ...source, notice_code: 'DISPATCHER_' + String(source.notice || '').toUpperCase(), operation_id: source.heartbeat_id, request_id: source.heartbeat_id };\nconst notice = buildDispatchNotice({\n  action,\n  configGlobal: tables.CONFIG_GLOBAL || [],\n  messages: gateway.response?.messages || {},\n  configVersion: gateway.response?.config_version || null,\n});\nreturn notice ? [{ json: notice }] : [];"
+      },
+      "id": "kkb-v2-prepare-dispatch-outcome-notice",
+      "name": "Prepare Dispatch Outcome Notice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "MoG6coBccYkIS0nK",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-call-error-handler-dispatch-notice",
+      "name": "Call Error Handler - Dispatch Notice",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2600,
+        220
+      ],
+      "notes": "Inactive branches, active sessions, and missed grace windows use the configured dispatcher destination."
+    },
+    {
+      "parameters": {
         "operation": "appendOrUpdate",
         "documentId": {
           "__rl": true,
@@ -418,6 +484,12 @@
             "scheduled_at": "={{$json.scheduled_at}}",
             "status": "CLAIMED",
             "attempt_count": "={{$json.attempt_count}}",
+            "retry_delay_minutes": "={{$json.retry_delay_minutes}}",
+            "retry_limit": "={{$json.retry_limit}}",
+            "worker_workflow": "={{$json.worker_workflow}}",
+            "claim_token": "={{$json.claim_token}}",
+            "operation_id": "={{$json.operation_id}}",
+            "request_id": "={{$json.request_id}}",
             "config_snapshot_id": "={{$json.config_snapshot_id}}",
             "updated_at": "={{$now}}"
           },
@@ -442,6 +514,53 @@
     },
     {
       "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "DISPATCH_HISTORY",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-dispatch-history-after-claim",
+      "name": "Read DISPATCH_HISTORY after claim",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2340,
+        -40
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const claimAsText = (value) => (value == null ? '' : String(value).trim());\nconst claimStableId = (prefix, value) => `${prefix}-${claimAsText(value).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n\nfunction prepareDispatchClaim({ action, claimToken, requestId } = {}) {\n  const dispatchKey = claimAsText(action?.dispatch_key);\n  const token = claimAsText(claimToken);\n  if (!dispatchKey || !token) return { ...(action ?? {}), claim_token: token };\n  return {\n    ...(action ?? {}),\n    status: 'CLAIMED',\n    claim_token: token,\n    operation_id: claimAsText(action.operation_id) || claimStableId('op-dispatch', dispatchKey),\n    request_id: claimAsText(requestId) || claimStableId('req-dispatch', `${dispatchKey}:${token}`),\n  };\n}\n\nfunction verifyDispatchClaim({ action, persistedRow } = {}) {\n  const dispatchKey = claimAsText(action?.dispatch_key);\n  const claimToken = claimAsText(action?.claim_token);\n  const row = persistedRow ?? {};\n  return Boolean(\n    dispatchKey &&\n    claimToken &&\n    claimAsText(row.dispatch_key) === dispatchKey &&\n    claimAsText(row.claim_token) === claimToken &&\n    ['CLAIMED', 'RUNNING'].includes(claimAsText(row.status).toUpperCase()),\n  );\n}\n\nconst action = $('Claim DISPATCH_HISTORY').first()?.json ?? {};\nconst rows = (() => {\n  try { return $items('Read DISPATCH_HISTORY after claim').map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); }\n  catch { return []; }\n})();\nconst persistedRow = rows.filter((row) => String(row.dispatch_key || '') === String(action.dispatch_key || '')).at(-1) || {};\nif (!verifyDispatchClaim({ action, persistedRow })) return [];\nreturn [{ json: { ...action, claim_verified: true } }];"
+      },
+      "id": "kkb-v2-verify-persisted-dispatch-claim",
+      "name": "Verify persisted dispatch claim",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        -40
+      ],
+      "notes": "A worker runs only when the read-back row still belongs to this execution token."
+    },
+    {
+      "parameters": {
         "workflowId": "={{$json.worker_workflow}}",
         "options": {
           "waitForSubWorkflow": true
@@ -457,6 +576,72 @@
       ],
       "notes": "Worker workflow ID comes from CONFIG_LICH; this node does not select a business worker by hard-coded schedule.",
       "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok !== true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-worker-failed-",
+      "name": "Worker failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2860,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\n\nfunction buildWorkerFailureEnvelope({ action = {}, worker = {}, now = new Date().toISOString() } = {}) {\n  if (worker?.ok === true) return null;\n  const nested = worker?.error && typeof worker.error === 'object' ? worker.error : {};\n  const errorCode = asText(worker.error_code) || asText(nested.error_code) || 'WORKER_FAILED';\n  const operationId = asText(action.operation_id);\n  const requestId = asText(action.request_id);\n  const workflow = 'WF04_V2_DISPATCHER';\n  const node = 'Execute Configured Worker';\n  return {\n    error: {\n      error_code: errorCode,\n      error_class: asText(worker.error_class) || asText(nested.error_class) || 'OPERATIONAL',\n      retryable: worker.retryable ?? nested.retryable ?? true,\n      message_key: asText(worker.message_key) || asText(nested.message_key) || errorCode,\n      message: asText(worker.message_safe) || asText(nested.message_safe) || errorCode,\n      operation_id: operationId,\n      request_id: requestId,\n      workflow,\n      node,\n      config_version: asText(action.config_version) || null,\n      failed_at: now,\n    },\n    context: {\n      workflow,\n      node,\n      operation_id: operationId,\n      request_id: requestId,\n      dispatch_key: asText(action.dispatch_key),\n      config_snapshot_id: asText(action.config_snapshot_id) || null,\n    },\n  };\n}\n\nconst notificationAsText = (value) => (value == null ? '' : String(value).trim());\n\nfunction configuredValue(rows, key) {\n  return notificationAsText((rows ?? []).find((row) => notificationAsText(row.config_key) === key && notificationAsText(row.trang_thai).toUpperCase() !== 'INACTIVE')?.config_value);\n}\n\nfunction dispatcherNotificationTarget({ configGlobal = [] } = {}) {\n  const chatId = configuredValue(configGlobal, 'DISPATCHER_NOTIFICATION_CHAT_ID');\n  if (!chatId) return null;\n  return {\n    chat_id: chatId,\n    message_thread_id: configuredValue(configGlobal, 'DISPATCHER_NOTIFICATION_THREAD_ID'),\n    branch_id: '',\n  };\n}\n\nfunction buildDispatchNotice({ action = {}, configGlobal = [], messages = {}, configVersion = null } = {}) {\n  const noticeCode = notificationAsText(action.notice_code);\n  if (!noticeCode) return null;\n  const operationId = notificationAsText(action.operation_id) || `op-dispatch-${notificationAsText(action.dispatch_key).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n  const requestId = notificationAsText(action.request_id) || operationId;\n  return {\n    error: {\n      error_code: noticeCode,\n      error_class: 'OPERATIONAL',\n      retryable: false,\n      message_key: noticeCode,\n      message: notificationAsText(messages[noticeCode]) || noticeCode,\n      operation_id: operationId,\n      request_id: requestId,\n      workflow: 'WF04_V2_DISPATCHER',\n      node: 'Dispatcher Decision',\n      config_version: configVersion,\n    },\n    context: {\n      workflow: 'WF04_V2_DISPATCHER',\n      node: 'Dispatcher Decision',\n      operation_id: operationId,\n      request_id: requestId,\n      dispatch_key: notificationAsText(action.dispatch_key),\n      branch_id: notificationAsText(action.branch_id),\n      config_snapshot_id: notificationAsText(action.config_snapshot_id) || null,\n    },\n    messages,\n    reply_target: dispatcherNotificationTarget({ configGlobal }),\n  };\n}\n\nconst worker = $input.first()?.json ?? {};\nconst action = $('Verify persisted dispatch claim').first()?.json ?? {};\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst envelope = buildWorkerFailureEnvelope({ action, worker, now: new Date().toISOString() });\nif (!envelope) return [];\nconst configGlobal = gateway.response?.data?.config_tables?.CONFIG_GLOBAL || [];\nreturn [{ json: { ...envelope, messages: gateway.response?.messages || {}, reply_target: dispatcherNotificationTarget({ configGlobal }) } }];"
+      },
+      "id": "kkb-v2-prepare-worker-error-handler-input",
+      "name": "Prepare Worker Error Handler Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "MoG6coBccYkIS0nK",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-call-error-handler-worker-failure",
+      "name": "Call Error Handler - Worker Failure",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3380,
+        120
+      ],
+      "notes": "All configured worker failures are normalized and audited by WF02."
     },
     {
       "parameters": {
@@ -702,6 +887,11 @@
             "node": "Record Dispatch Outcome",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Dispatch notice required?",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -717,7 +907,62 @@
         ]
       ]
     },
+    "Dispatch notice required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Dispatch Outcome Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Dispatch Outcome Notice": {
+      "main": [
+        [
+          {
+            "node": "Call Error Handler - Dispatch Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Error Handler - Dispatch Notice": {
+      "main": [
+        [
+          {
+            "node": "Return Dispatcher Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Claim DISPATCH_HISTORY": {
+      "main": [
+        [
+          {
+            "node": "Read DISPATCH_HISTORY after claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read DISPATCH_HISTORY after claim": {
+      "main": [
+        [
+          {
+            "node": "Verify persisted dispatch claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify persisted dispatch claim": {
       "main": [
         [
           {
@@ -732,7 +977,45 @@
       "main": [
         [
           {
+            "node": "Worker failed?",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Finalize Dispatch History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Worker failed?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Worker Error Handler Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Worker Error Handler Input": {
+      "main": [
+        [
+          {
+            "node": "Call Error Handler - Worker Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Error Handler - Worker Failure": {
+      "main": [
+        [
+          {
+            "node": "Return Dispatcher Result",
             "type": "main",
             "index": 0
           }

@@ -5,6 +5,12 @@ import {
   planDispatch,
   recordHeartbeat,
 } from '../../src/dispatcher/decide-dispatch.mjs';
+import {
+  prepareDispatchClaim,
+  verifyDispatchClaim,
+} from '../../src/dispatcher/claim-dispatch.mjs';
+import { buildWorkerFailureEnvelope } from '../../src/dispatcher/worker-failure.mjs';
+import { buildDispatchNotice } from '../../src/dispatcher/notifications.mjs';
 
 const now = '2026-09-23T16:50:00.000Z';
 
@@ -61,6 +67,7 @@ test('records an outside-grace warning and does not dispatch the wrong date', ()
   assert.equal(result.actions.filter((action) => action.kind === 'DISPATCH').length, 0);
   assert.equal(result.actions[0].kind, 'WARNING');
   assert.equal(result.actions[0].reason, 'OUTSIDE_GRACE_WINDOW');
+  assert.equal(result.actions[0].notice_code, 'DISPATCH_OUTSIDE_GRACE_WINDOW');
   assert.equal(result.actions[0].business_date, '2026-09-23');
 });
 
@@ -78,6 +85,7 @@ test('skips inactive branches and branches with an active session', () => {
   });
 
   assert.deepEqual(result.actions.map((action) => action.reason).sort(), ['ACTIVE_SESSION_EXISTS', 'BRANCH_INACTIVE']);
+  assert.deepEqual(result.actions.map((action) => action.notice_code).sort(), ['DISPATCH_ACTIVE_SESSION_EXISTS', 'DISPATCH_BRANCH_INACTIVE']);
   assert.equal(result.actions.filter((action) => action.kind === 'DISPATCH').length, 0);
 });
 
@@ -92,6 +100,72 @@ test('a claimed or completed dispatch is not emitted again', () => {
   });
 
   assert.equal(result.actions.length, 0);
+});
+
+test('only the execution that owns the persisted claim may invoke the worker', () => {
+  const planned = planDispatch({
+    now: '2026-09-23T16:50:00.000Z',
+    schedules: [schedule()],
+    branches: [{ branch_id: 'CN_HN', trang_thai: 'ACTIVE' }],
+    history: [],
+    activeSessions: [],
+    configSnapshotId: 'cfg-v2-fp',
+  }).actions[0];
+  const first = prepareDispatchClaim({ action: planned, claimToken: 'execution-a', requestId: 'req-a' });
+  const second = prepareDispatchClaim({ action: planned, claimToken: 'execution-b', requestId: 'req-b' });
+
+  assert.equal(first.operation_id, second.operation_id);
+  assert.equal(first.claim_token, 'execution-a');
+  assert.equal(verifyDispatchClaim({ action: first, persistedRow: first }), true);
+  assert.equal(verifyDispatchClaim({ action: first, persistedRow: second }), false);
+  assert.equal(verifyDispatchClaim({ action: second, persistedRow: second }), true);
+});
+
+test('worker failure is normalized into the shared Error Handler envelope', () => {
+  const envelope = buildWorkerFailureEnvelope({
+    action: {
+      dispatch_key: 'lich-kiem-ke:CN_HN:2026-09-23',
+      operation_id: 'op-dispatch-lich-kiem-ke_CN_HN_2026-09-23',
+      request_id: 'req-dispatch-a',
+      config_snapshot_id: 'cfg-v2-fp',
+    },
+    worker: { ok: false, error_code: 'INVENTORY_TOPIC_NOT_CONFIGURED', retryable: true },
+    now: '2026-09-23T16:51:00.000Z',
+  });
+
+  assert.equal(envelope.error.error_code, 'INVENTORY_TOPIC_NOT_CONFIGURED');
+  assert.equal(envelope.error.retryable, true);
+  assert.equal(envelope.error.operation_id, 'op-dispatch-lich-kiem-ke_CN_HN_2026-09-23');
+  assert.equal(envelope.error.request_id, 'req-dispatch-a');
+  assert.equal(envelope.context.dispatch_key, 'lich-kiem-ke:CN_HN:2026-09-23');
+  assert.equal(envelope.context.config_snapshot_id, 'cfg-v2-fp');
+  assert.equal(buildWorkerFailureEnvelope({ action: envelope.context, worker: { ok: true } }), null);
+});
+
+test('dispatch notices use the configured destination and configured message key', () => {
+  const notice = buildDispatchNotice({
+    action: {
+      kind: 'SKIP',
+      reason: 'ACTIVE_SESSION_EXISTS',
+      notice_code: 'DISPATCH_ACTIVE_SESSION_EXISTS',
+      dispatch_key: 'lich-kiem-ke:CN_HN:2026-09-23',
+      branch_id: 'CN_HN',
+      operation_id: 'op-dispatch-1',
+      request_id: 'req-dispatch-1',
+      config_snapshot_id: 'cfg-v2-fp',
+    },
+    configGlobal: [
+      { config_key: 'DISPATCHER_NOTIFICATION_CHAT_ID', config_value: '-100999', trang_thai: 'ACTIVE' },
+      { config_key: 'DISPATCHER_NOTIFICATION_THREAD_ID', config_value: '88', trang_thai: 'ACTIVE' },
+    ],
+    messages: { DISPATCH_ACTIVE_SESSION_EXISTS: 'Đã có phiên kiểm kê đang hoạt động.' },
+  });
+
+  assert.equal(notice.error.error_code, 'DISPATCH_ACTIVE_SESSION_EXISTS');
+  assert.equal(notice.error.message_key, 'DISPATCH_ACTIVE_SESSION_EXISTS');
+  assert.equal(notice.reply_target.chat_id, '-100999');
+  assert.equal(notice.reply_target.message_thread_id, '88');
+  assert.equal(notice.reply_target.branch_id, '');
 });
 
 test('critical heartbeat uses configured threshold and recovery is emitted once', () => {

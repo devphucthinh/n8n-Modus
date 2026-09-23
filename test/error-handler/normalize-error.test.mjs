@@ -44,3 +44,14 @@ test('returns a stable fingerprint for the same sanitized failure context', () =
   assert.equal(first.error_row.fingerprint, second.error_row.fingerprint);
   assert.equal(first.response.error_id, second.response.error_id);
 });
+
+test('renders the configured message for a shared error code', () => {
+  const result = normalizeWorkflowError({
+    error: { error_code: 'DISPATCH_ACTIVE_SESSION_EXISTS', message_key: 'DISPATCH_ACTIVE_SESSION_EXISTS' },
+    context: { request_id: 'req-dispatch-1', operation_id: 'op-dispatch-1', workflow: 'WF04_V2_DISPATCHER' },
+    messages: { DISPATCH_ACTIVE_SESSION_EXISTS: 'Đã có phiên hoạt động. Mã lỗi: {error_id}' },
+    now: FIXED_NOW,
+  });
+
+  assert.match(result.response.message_safe, /^Đã có phiên hoạt động\. Mã lỗi: err-/);
+});

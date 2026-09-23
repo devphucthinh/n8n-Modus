@@ -9,6 +9,7 @@ const SNAPSHOT_FORMAT = 'columnar-v1';
 
 const asText = (value) => (value == null ? '' : String(value).trim());
 const isBlank = (value) => asText(value) === '';
+const isPreparedRow = (row) => asText(row?.trang_thai).toUpperCase() === 'PREPARED';
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -200,6 +201,7 @@ function validateRows(tables, rules, envelope) {
     const rows = tableRows(tables, rule.sheet_name) ?? [];
     const seen = new Map();
     for (const [index, row] of rows.entries()) {
+      if (isPreparedRow(row)) continue;
       const value = row?.[rule.column_name];
       if (rule.required && isBlank(value)) {
         return makeFailure('CONFIG_REQUIRED_VALUE_MISSING', `Missing value for ${rule.sheet_name}.${rule.column_name}`, envelope, { sheet_name: rule.sheet_name, column_name: rule.column_name, row_number: index + 2 });
@@ -234,7 +236,7 @@ function validateRows(tables, rules, envelope) {
 function normalizeConfigTables(tables) {
   return Object.fromEntries(FINGERPRINT_SHEETS.filter((sheetName) => tableRows(tables, sheetName) !== null).map((sheetName) => {
     const columns = ALL_SHEET_DEFINITIONS[sheetName] ?? [];
-    const rows = (tableRows(tables, sheetName) ?? []).map((row) => Object.fromEntries(
+    const rows = (tableRows(tables, sheetName) ?? []).filter((row) => !isPreparedRow(row)).map((row) => Object.fromEntries(
       columns.map((column) => [column, row?.[column] == null ? '' : String(row[column]).trim()]),
     ));
     rows.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
@@ -277,7 +279,7 @@ function expandSnapshotPayload(value) {
 }
 
 function activeVersionRow(tables) {
-  return (tableRows(tables, 'CONFIG_VERSION') ?? []).find((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE') ?? null;
+  return (tableRows(tables, 'CONFIG_VERSION') ?? []).find((row) => !isPreparedRow(row) && asText(row.trang_thai).toUpperCase() !== 'INACTIVE') ?? null;
 }
 
 function versionNumber(version) {
@@ -319,13 +321,13 @@ function snapshotContentMatches(predecessor, normalizedConfigJson) {
 
 function configuredMessages(tables) {
   return Object.fromEntries((tableRows(tables, 'CONFIG_THONG_BAO') ?? [])
-    .filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE' && !isBlank(row.message_key))
+    .filter((row) => !isPreparedRow(row) && asText(row.trang_thai).toUpperCase() !== 'INACTIVE' && !isBlank(row.message_key))
     .map((row) => [asText(row.message_key), asText(row.message_text)]));
 }
 
 function requestedConfigTables(tables, requested) {
   return Object.fromEntries(requested.map((sheetName) => [sheetName, (tableRows(tables, sheetName) ?? [])
-    .filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE')
+    .filter((row) => !isPreparedRow(row) && asText(row.trang_thai).toUpperCase() !== 'INACTIVE')
     .map((row) => ({ ...row }))]));
 }
 

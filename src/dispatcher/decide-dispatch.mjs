@@ -89,17 +89,17 @@ export function planDispatch({ now = new Date().toISOString(), schedules = [], b
     const previous = (history ?? []).find((row) => asText(row.dispatch_key) === dispatchKey);
     if (historyBlocks(previous, schedule, now)) continue;
     if (candidate.state === 'OUTSIDE_GRACE_WINDOW') {
-      actions.push({ kind: 'WARNING', reason: 'OUTSIDE_GRACE_WINDOW', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, scheduled_at: candidate.scheduledAt.toISOString(), config_snapshot_id: configSnapshotId });
+      actions.push({ kind: 'WARNING', reason: 'OUTSIDE_GRACE_WINDOW', notice_code: 'DISPATCH_OUTSIDE_GRACE_WINDOW', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, scheduled_at: candidate.scheduledAt.toISOString(), config_snapshot_id: configSnapshotId });
       continue;
     }
     const branch = (branches ?? []).find((row) => asText(row.branch_id) === asText(schedule.branch_id));
     if (!branch || asText(branch.trang_thai).toUpperCase() !== ACTIVE) {
-      actions.push({ kind: 'SKIP', reason: 'BRANCH_INACTIVE', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, config_snapshot_id: configSnapshotId });
+      actions.push({ kind: 'SKIP', reason: 'BRANCH_INACTIVE', notice_code: 'DISPATCH_BRANCH_INACTIVE', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, config_snapshot_id: configSnapshotId });
       continue;
     }
     const existing = activeSession(activeSessions, schedule.branch_id);
     if (existing) {
-      actions.push({ kind: 'SKIP', reason: 'ACTIVE_SESSION_EXISTS', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, session_id: asText(existing.session_id), config_snapshot_id: configSnapshotId });
+      actions.push({ kind: 'SKIP', reason: 'ACTIVE_SESSION_EXISTS', notice_code: 'DISPATCH_ACTIVE_SESSION_EXISTS', dispatch_key: dispatchKey, schedule_id: asText(schedule.schedule_id), job_code: asText(schedule.job_code), branch_id: asText(schedule.branch_id), business_date: candidate.businessDate, session_id: asText(existing.session_id), config_snapshot_id: configSnapshotId });
       continue;
     }
     const attemptCount = asNumber(previous?.attempt_count, 0) + 1;

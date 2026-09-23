@@ -81,7 +81,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst active = (row) => ['ACTIVE', 'OPEN', 'IN_PROGRESS'].includes(asText(row?.status).toUpperCase());\nconst stableId = (prefix, value) => `${prefix}-${asText(value).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n\nfunction auditRow({ envelope, sessionId, outcome, now }) {\n  return {\n    event_id: stableId('evt-session', envelope.payload?.dispatch_key || envelope.operation_id),\n    event_type: 'INVENTORY_SESSION_DISPATCH',\n    request_id: asText(envelope.request_id),\n    operation_id: asText(envelope.operation_id),\n    actor_user_id: asText(envelope.actor_user_id) || 'SYSTEM',\n    branch_id: asText(envelope.branch_id),\n    topic_type: 'KIEM_KE',\n    command: '/kiemke',\n    outcome,\n    error_code: '',\n    created_at: now,\n    trang_thai: 'ACTIVE',\n  };\n}\n\nfunction openOrReuseInventorySession({ envelope, configSnapshotId, topics = [], sessions = [], now = new Date().toISOString() } = {}) {\n  if (!envelope?.request_id || !envelope?.operation_id || !envelope?.branch_id || !envelope?.business_date || !configSnapshotId) {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_CONTEXT_INVALID', write_plan: [] };\n  }\n  const existing = (sessions ?? []).find((row) => asText(row.branch_id) === asText(envelope.branch_id) && active(row));\n  if (existing) {\n    return {\n      ok: true,\n      status: 'REUSED',\n      session: { ...existing },\n      write_plan: [{ sheet: 'EVENT_LOG', action: 'APPEND_OR_UPDATE', match: { event_id: stableId('evt-session', envelope.payload?.dispatch_key || envelope.operation_id) }, row: auditRow({ envelope, sessionId: asText(existing.session_id), outcome: 'REUSED_ACTIVE_SESSION', now }) }],\n    };\n  }\n  const topic = (topics ?? []).find((row) => asText(row.branch_id) === asText(envelope.branch_id) && asText(row.topic_type).toUpperCase() === 'KIEM_KE' && asText(row.trang_thai).toUpperCase() === 'ACTIVE');\n  if (!topic) return { ok: false, status: 'ERROR', error_code: 'INVENTORY_TOPIC_NOT_CONFIGURED', write_plan: [] };\n  const dispatchKey = asText(envelope.payload?.dispatch_key) || asText(envelope.operation_id);\n  const sessionId = stableId('session', dispatchKey);\n  const session = {\n    session_id: sessionId,\n    branch_id: asText(envelope.branch_id),\n    business_date: asText(envelope.business_date),\n    config_snapshot_id: asText(configSnapshotId),\n    topic_id: asText(topic.topic_id),\n    chat_id: asText(topic.chat_id),\n    message_thread_id: asText(topic.message_thread_id),\n    dispatch_key: dispatchKey,\n    status: 'ACTIVE',\n    created_at: now,\n    updated_at: now,\n    topic_action: 'REUSE_TOPIC',\n  };\n  return {\n    ok: true,\n    status: 'OPENED',\n    session,\n    write_plan: [\n      { sheet: 'PHIEN_KIEM_KE', action: 'APPEND_OR_UPDATE', match: { session_id: sessionId }, row: session },\n      { sheet: 'EVENT_LOG', action: 'APPEND_OR_UPDATE', match: { event_id: stableId('evt-session', dispatchKey) }, row: auditRow({ envelope, sessionId, outcome: 'OPENED', now }) },\n    ],\n  };\n}\n\nconst trigger = $('Execute Workflow Trigger').first()?.json ?? {};\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst envelope = trigger.envelope ?? trigger;\nconst topics = gateway.response?.data?.config_tables?.CONFIG_TOPIC ?? [];\nconst snapshotId = envelope.payload?.config_snapshot_id || gateway.response?.config_snapshot_id || null;\nconst rows = (() => { try { return $items('Read PHIEN_KIEM_KE').map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); } catch { return []; } })();\nconst result = openOrReuseInventorySession({ envelope, configSnapshotId: snapshotId, topics, sessions: rows, now: new Date().toISOString() });\nreturn [{ json: result }];"
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst active = (row) => ['ACTIVE', 'OPEN', 'IN_PROGRESS'].includes(asText(row?.status).toUpperCase());\nconst stableId = (prefix, value) => `${prefix}-${asText(value).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n\nfunction auditRow({ envelope, outcome, now }) {\n  return {\n    event_id: stableId('evt-session', envelope.payload?.dispatch_key || envelope.operation_id),\n    event_type: 'INVENTORY_SESSION_DISPATCH',\n    request_id: asText(envelope.request_id),\n    operation_id: asText(envelope.operation_id),\n    actor_user_id: asText(envelope.actor_user_id) || 'SYSTEM',\n    branch_id: asText(envelope.branch_id),\n    topic_type: 'KIEM_KE',\n    command: '/kiemke',\n    outcome,\n    error_code: '',\n    created_at: now,\n    trang_thai: 'ACTIVE',\n  };\n}\n\nfunction operationRow({ envelope, dispatchKey, operationType, expectedRowCount, now }) {\n  return {\n    operation_id: asText(envelope.operation_id),\n    request_id: asText(envelope.request_id),\n    operation_type: operationType,\n    idempotency_key: dispatchKey,\n    expected_row_count: expectedRowCount,\n    actual_row_count: '',\n    checksum: '',\n    status: 'PREPARED',\n    error_id: '',\n    created_at: now,\n    updated_at: now,\n  };\n}\n\nfunction stagedAuditRow({ envelope, outcome, now }) {\n  return { ...auditRow({ envelope, outcome, now }), trang_thai: 'PREPARED' };\n}\n\nfunction stagedSessionRow(session) {\n  return { ...session, status: 'PREPARED' };\n}\n\nfunction configuredValue(rows, key) {\n  return asText((rows ?? []).find((row) => asText(row.config_key) === key && asText(row.trang_thai).toUpperCase() !== 'INACTIVE')?.config_value);\n}\n\nfunction resolveInventoryTopic({ topics, branch, configGlobal, createdTopic } = {}) {\n  const branchId = asText(branch?.branch_id);\n  const existing = (topics ?? []).find((row) => asText(row.branch_id) === branchId && asText(row.topic_type).toUpperCase() === 'KIEM_KE' && asText(row.trang_thai).toUpperCase() === 'ACTIVE');\n  if (existing) return { topic: existing, topicAction: 'REUSE_TOPIC' };\n\n  const chatId = asText(branch?.forum_chat_id);\n  const topicNameTemplate = configuredValue(configGlobal, 'INVENTORY_TOPIC_NAME_TEMPLATE') || configuredValue(configGlobal, 'INVENTORY_TOPIC_NAME');\n  const topicName = topicNameTemplate.replaceAll('{branch_id}', branchId).replaceAll('{branch_name}', asText(branch?.branch_name));\n  const topicId = stableId('topic', `${branchId}-KIEM_KE`);\n  const threadId = asText(createdTopic?.message_thread_id || createdTopic?.result?.message_thread_id);\n  if (threadId) {\n    const topic = {\n      topic_id: topicId,\n      branch_id: branchId,\n      topic_type: 'KIEM_KE',\n      chat_id: chatId,\n      message_thread_id: threadId,\n      trang_thai: 'ACTIVE',\n    };\n    return {\n      topic,\n      topicAction: 'CREATE_TOPIC',\n      configTopicRow: { ...topic, trang_thai: 'PREPARED' },\n    };\n  }\n  if (createdTopic) return { error_code: 'INVENTORY_TOPIC_CREATE_FAILED' };\n  if (!branchId || !chatId || !topicName) {\n    return { error_code: 'INVENTORY_TOPIC_NOT_CONFIGURED' };\n  }\n  return {\n    needsCreation: true,\n    topic_request: { method: 'createForumTopic', chat_id: chatId, name: topicName },\n    configTopicRow: {\n      topic_id: topicId,\n      branch_id: branchId,\n      topic_type: 'KIEM_KE',\n      chat_id: chatId,\n      message_thread_id: '',\n      trang_thai: 'ACTIVE',\n    },\n  };\n}\n\nfunction commitOperationPlan({ operation, audit, session, topic, now }) {\n  const commitPlan = [];\n  if (topic) {\n    commitPlan.push({\n      sheet: 'CONFIG_TOPIC',\n      phase: 'COMMIT',\n      action: 'UPDATE',\n      match: { topic_id: topic.topic_id },\n      patch: { message_thread_id: topic.message_thread_id, trang_thai: 'ACTIVE' },\n    });\n  }\n  if (session) {\n    commitPlan.push({\n      sheet: 'PHIEN_KIEM_KE',\n      phase: 'COMMIT',\n      action: 'UPDATE',\n      match: { session_id: session.session_id },\n      patch: { status: 'ACTIVE', updated_at: now },\n    });\n  }\n  commitPlan.push({\n    sheet: 'EVENT_LOG',\n    phase: 'COMMIT',\n    action: 'UPDATE',\n    match: { event_id: audit.event_id },\n    patch: { trang_thai: 'COMMITTED' },\n  });\n  commitPlan.push({\n    sheet: 'OPERATION',\n    phase: 'COMMIT',\n    action: 'UPDATE',\n    match: { operation_id: operation.operation_id },\n    patch: { status: 'COMMITTED', actual_row_count: operation.expected_row_count, updated_at: now },\n  });\n  return commitPlan;\n}\n\nfunction openOrReuseInventorySession({ envelope, configSnapshotId, topics = [], sessions = [], branch = null, configGlobal = [], createdTopic = null, now = new Date().toISOString() } = {}) {\n  if (!envelope?.request_id || !envelope?.operation_id || !envelope?.branch_id || !envelope?.business_date || !configSnapshotId) {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_CONTEXT_INVALID', write_plan: [] };\n  }\n  const dispatchKey = asText(envelope.payload?.dispatch_key) || asText(envelope.operation_id);\n  const existing = (sessions ?? []).find((row) => asText(row.branch_id) === asText(envelope.branch_id) && active(row));\n  if (existing) {\n    const operation = operationRow({ envelope, dispatchKey, operationType: 'REUSE_INVENTORY_SESSION', expectedRowCount: 2, now });\n    const audit = stagedAuditRow({ envelope, outcome: 'REUSED_ACTIVE_SESSION', now });\n    return {\n      ok: true,\n      status: 'REUSED',\n      session: { ...existing },\n      operation,\n      write_plan: [\n        { sheet: 'OPERATION', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { operation_id: operation.operation_id }, row: operation },\n        { sheet: 'EVENT_LOG', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { event_id: audit.event_id }, row: audit },\n      ],\n      commit_plan: commitOperationPlan({ operation, audit, now }),\n    };\n  }\n  const topicResult = resolveInventoryTopic({ topics, branch: branch || { branch_id: envelope.branch_id }, configGlobal, createdTopic });\n  if (topicResult.needsCreation) {\n    return {\n      ok: false,\n      status: 'TOPIC_CREATE_REQUIRED',\n      error_code: 'INVENTORY_TOPIC_CREATE_REQUIRED',\n      topic_request: topicResult.topic_request,\n      config_topic_row: topicResult.configTopicRow,\n      write_plan: [],\n    };\n  }\n  if (!topicResult.topic) return { ok: false, status: 'ERROR', error_code: topicResult.error_code || 'INVENTORY_TOPIC_NOT_CONFIGURED', write_plan: [] };\n  const topic = topicResult.topic;\n  const sessionId = stableId('session', dispatchKey);\n  const session = {\n    session_id: sessionId,\n    branch_id: asText(envelope.branch_id),\n    business_date: asText(envelope.business_date),\n    config_snapshot_id: asText(configSnapshotId),\n    topic_id: asText(topic.topic_id),\n    chat_id: asText(topic.chat_id),\n    message_thread_id: asText(topic.message_thread_id),\n    dispatch_key: dispatchKey,\n    status: 'ACTIVE',\n    created_at: now,\n    updated_at: now,\n    topic_action: topicResult.topicAction,\n  };\n  const topicWrite = topicResult.configTopicRow ? {\n    sheet: 'CONFIG_TOPIC',\n    phase: 'PREPARE',\n    action: 'APPEND_OR_UPDATE',\n    match: { topic_id: topic.topic_id },\n    row: topicResult.configTopicRow,\n  } : null;\n  const expectedRowCount = topicWrite ? 4 : 3;\n  const operation = operationRow({ envelope, dispatchKey, operationType: 'OPEN_INVENTORY_SESSION', expectedRowCount, now });\n  const audit = stagedAuditRow({ envelope, outcome: 'OPENED', now });\n  return {\n    ok: true,\n    status: 'OPENED',\n    session,\n    operation,\n    write_plan: [\n      { sheet: 'OPERATION', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { operation_id: operation.operation_id }, row: operation },\n      ...(topicWrite ? [topicWrite] : []),\n      { sheet: 'PHIEN_KIEM_KE', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { session_id: sessionId }, row: stagedSessionRow(session) },\n      { sheet: 'EVENT_LOG', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { event_id: audit.event_id }, row: audit },\n    ],\n    topic_write_plan: topicWrite ? [topicWrite] : [],\n    commit_plan: commitOperationPlan({ operation, audit, session, topic: topicWrite ? topic : null, now }),\n  };\n}\n\nconst trigger = $('Execute Workflow Trigger').first()?.json ?? {};\nconst input = $input.first()?.json ?? {};\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst envelope = trigger.envelope ?? trigger;\nconst topics = gateway.response?.data?.config_tables?.CONFIG_TOPIC ?? [];\nconst branch = (gateway.response?.data?.config_tables?.CONFIG_BRANCH ?? []).find((row) => String(row.branch_id || '').trim() === String(envelope.branch_id || '').trim()) || { branch_id: envelope.branch_id };\nconst configGlobal = gateway.response?.data?.config_tables?.CONFIG_GLOBAL ?? [];\nconst snapshotId = envelope.payload?.config_snapshot_id || gateway.response?.config_snapshot_id || null;\nconst createdTopic = trigger.created_topic || input.created_topic || input.body || (input.result || input.error ? input : null);\nconst rows = (() => { try { return $items('Read PHIEN_KIEM_KE').map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); } catch { return []; } })();\nconst result = openOrReuseInventorySession({ envelope, configSnapshotId: snapshotId, topics, sessions: rows, branch, configGlobal, createdTopic, now: new Date().toISOString() });\nreturn [{ json: result }];"
       },
       "id": "kkb-v2-open-or-reuse-inventory-session",
       "name": "Open or Reuse Inventory Session",
@@ -94,28 +94,308 @@
     },
     {
       "parameters": {
-        "jsCode": "const result = $('Open or Reuse Inventory Session').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'PHIEN_KIEM_KE'); return entry?.row ? [{json: entry.row}] : [];"
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.status === 'TOPIC_CREATE_REQUIRED'}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-topic-creation-required-",
+      "name": "Topic creation required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const request = $json.topic_request; if (!request?.chat_id || !request?.name) return []; return [{json: {chat_id: request.chat_id, name: request.name}}];"
+      },
+      "id": "kkb-v2-prepare-telegram-topic-request",
+      "name": "Prepare Telegram Topic Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$credentials.baseUrl}}/bot{{$credentials.accessToken}}/createForumTopic",
+        "authentication": "none",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({chat_id: $json.chat_id, name: $json.name})}}",
+        "options": {}
+      },
+      "id": "kkb-v2-create-telegram-forum-topic",
+      "name": "Create Telegram Forum Topic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        180
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "TELEGRAM_KKB_V2"
+        }
+      },
+      "notes": "Uses the Telegram credential for the Bot API createForumTopic method; the token is never stored in workflow JSON.",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst active = (row) => ['ACTIVE', 'OPEN', 'IN_PROGRESS'].includes(asText(row?.status).toUpperCase());\nconst stableId = (prefix, value) => `${prefix}-${asText(value).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n\nfunction auditRow({ envelope, outcome, now }) {\n  return {\n    event_id: stableId('evt-session', envelope.payload?.dispatch_key || envelope.operation_id),\n    event_type: 'INVENTORY_SESSION_DISPATCH',\n    request_id: asText(envelope.request_id),\n    operation_id: asText(envelope.operation_id),\n    actor_user_id: asText(envelope.actor_user_id) || 'SYSTEM',\n    branch_id: asText(envelope.branch_id),\n    topic_type: 'KIEM_KE',\n    command: '/kiemke',\n    outcome,\n    error_code: '',\n    created_at: now,\n    trang_thai: 'ACTIVE',\n  };\n}\n\nfunction operationRow({ envelope, dispatchKey, operationType, expectedRowCount, now }) {\n  return {\n    operation_id: asText(envelope.operation_id),\n    request_id: asText(envelope.request_id),\n    operation_type: operationType,\n    idempotency_key: dispatchKey,\n    expected_row_count: expectedRowCount,\n    actual_row_count: '',\n    checksum: '',\n    status: 'PREPARED',\n    error_id: '',\n    created_at: now,\n    updated_at: now,\n  };\n}\n\nfunction stagedAuditRow({ envelope, outcome, now }) {\n  return { ...auditRow({ envelope, outcome, now }), trang_thai: 'PREPARED' };\n}\n\nfunction stagedSessionRow(session) {\n  return { ...session, status: 'PREPARED' };\n}\n\nfunction configuredValue(rows, key) {\n  return asText((rows ?? []).find((row) => asText(row.config_key) === key && asText(row.trang_thai).toUpperCase() !== 'INACTIVE')?.config_value);\n}\n\nfunction resolveInventoryTopic({ topics, branch, configGlobal, createdTopic } = {}) {\n  const branchId = asText(branch?.branch_id);\n  const existing = (topics ?? []).find((row) => asText(row.branch_id) === branchId && asText(row.topic_type).toUpperCase() === 'KIEM_KE' && asText(row.trang_thai).toUpperCase() === 'ACTIVE');\n  if (existing) return { topic: existing, topicAction: 'REUSE_TOPIC' };\n\n  const chatId = asText(branch?.forum_chat_id);\n  const topicNameTemplate = configuredValue(configGlobal, 'INVENTORY_TOPIC_NAME_TEMPLATE') || configuredValue(configGlobal, 'INVENTORY_TOPIC_NAME');\n  const topicName = topicNameTemplate.replaceAll('{branch_id}', branchId).replaceAll('{branch_name}', asText(branch?.branch_name));\n  const topicId = stableId('topic', `${branchId}-KIEM_KE`);\n  const threadId = asText(createdTopic?.message_thread_id || createdTopic?.result?.message_thread_id);\n  if (threadId) {\n    const topic = {\n      topic_id: topicId,\n      branch_id: branchId,\n      topic_type: 'KIEM_KE',\n      chat_id: chatId,\n      message_thread_id: threadId,\n      trang_thai: 'ACTIVE',\n    };\n    return {\n      topic,\n      topicAction: 'CREATE_TOPIC',\n      configTopicRow: { ...topic, trang_thai: 'PREPARED' },\n    };\n  }\n  if (createdTopic) return { error_code: 'INVENTORY_TOPIC_CREATE_FAILED' };\n  if (!branchId || !chatId || !topicName) {\n    return { error_code: 'INVENTORY_TOPIC_NOT_CONFIGURED' };\n  }\n  return {\n    needsCreation: true,\n    topic_request: { method: 'createForumTopic', chat_id: chatId, name: topicName },\n    configTopicRow: {\n      topic_id: topicId,\n      branch_id: branchId,\n      topic_type: 'KIEM_KE',\n      chat_id: chatId,\n      message_thread_id: '',\n      trang_thai: 'ACTIVE',\n    },\n  };\n}\n\nfunction commitOperationPlan({ operation, audit, session, topic, now }) {\n  const commitPlan = [];\n  if (topic) {\n    commitPlan.push({\n      sheet: 'CONFIG_TOPIC',\n      phase: 'COMMIT',\n      action: 'UPDATE',\n      match: { topic_id: topic.topic_id },\n      patch: { message_thread_id: topic.message_thread_id, trang_thai: 'ACTIVE' },\n    });\n  }\n  if (session) {\n    commitPlan.push({\n      sheet: 'PHIEN_KIEM_KE',\n      phase: 'COMMIT',\n      action: 'UPDATE',\n      match: { session_id: session.session_id },\n      patch: { status: 'ACTIVE', updated_at: now },\n    });\n  }\n  commitPlan.push({\n    sheet: 'EVENT_LOG',\n    phase: 'COMMIT',\n    action: 'UPDATE',\n    match: { event_id: audit.event_id },\n    patch: { trang_thai: 'COMMITTED' },\n  });\n  commitPlan.push({\n    sheet: 'OPERATION',\n    phase: 'COMMIT',\n    action: 'UPDATE',\n    match: { operation_id: operation.operation_id },\n    patch: { status: 'COMMITTED', actual_row_count: operation.expected_row_count, updated_at: now },\n  });\n  return commitPlan;\n}\n\nfunction openOrReuseInventorySession({ envelope, configSnapshotId, topics = [], sessions = [], branch = null, configGlobal = [], createdTopic = null, now = new Date().toISOString() } = {}) {\n  if (!envelope?.request_id || !envelope?.operation_id || !envelope?.branch_id || !envelope?.business_date || !configSnapshotId) {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_CONTEXT_INVALID', write_plan: [] };\n  }\n  const dispatchKey = asText(envelope.payload?.dispatch_key) || asText(envelope.operation_id);\n  const existing = (sessions ?? []).find((row) => asText(row.branch_id) === asText(envelope.branch_id) && active(row));\n  if (existing) {\n    const operation = operationRow({ envelope, dispatchKey, operationType: 'REUSE_INVENTORY_SESSION', expectedRowCount: 2, now });\n    const audit = stagedAuditRow({ envelope, outcome: 'REUSED_ACTIVE_SESSION', now });\n    return {\n      ok: true,\n      status: 'REUSED',\n      session: { ...existing },\n      operation,\n      write_plan: [\n        { sheet: 'OPERATION', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { operation_id: operation.operation_id }, row: operation },\n        { sheet: 'EVENT_LOG', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { event_id: audit.event_id }, row: audit },\n      ],\n      commit_plan: commitOperationPlan({ operation, audit, now }),\n    };\n  }\n  const topicResult = resolveInventoryTopic({ topics, branch: branch || { branch_id: envelope.branch_id }, configGlobal, createdTopic });\n  if (topicResult.needsCreation) {\n    return {\n      ok: false,\n      status: 'TOPIC_CREATE_REQUIRED',\n      error_code: 'INVENTORY_TOPIC_CREATE_REQUIRED',\n      topic_request: topicResult.topic_request,\n      config_topic_row: topicResult.configTopicRow,\n      write_plan: [],\n    };\n  }\n  if (!topicResult.topic) return { ok: false, status: 'ERROR', error_code: topicResult.error_code || 'INVENTORY_TOPIC_NOT_CONFIGURED', write_plan: [] };\n  const topic = topicResult.topic;\n  const sessionId = stableId('session', dispatchKey);\n  const session = {\n    session_id: sessionId,\n    branch_id: asText(envelope.branch_id),\n    business_date: asText(envelope.business_date),\n    config_snapshot_id: asText(configSnapshotId),\n    topic_id: asText(topic.topic_id),\n    chat_id: asText(topic.chat_id),\n    message_thread_id: asText(topic.message_thread_id),\n    dispatch_key: dispatchKey,\n    status: 'ACTIVE',\n    created_at: now,\n    updated_at: now,\n    topic_action: topicResult.topicAction,\n  };\n  const topicWrite = topicResult.configTopicRow ? {\n    sheet: 'CONFIG_TOPIC',\n    phase: 'PREPARE',\n    action: 'APPEND_OR_UPDATE',\n    match: { topic_id: topic.topic_id },\n    row: topicResult.configTopicRow,\n  } : null;\n  const expectedRowCount = topicWrite ? 4 : 3;\n  const operation = operationRow({ envelope, dispatchKey, operationType: 'OPEN_INVENTORY_SESSION', expectedRowCount, now });\n  const audit = stagedAuditRow({ envelope, outcome: 'OPENED', now });\n  return {\n    ok: true,\n    status: 'OPENED',\n    session,\n    operation,\n    write_plan: [\n      { sheet: 'OPERATION', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { operation_id: operation.operation_id }, row: operation },\n      ...(topicWrite ? [topicWrite] : []),\n      { sheet: 'PHIEN_KIEM_KE', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { session_id: sessionId }, row: stagedSessionRow(session) },\n      { sheet: 'EVENT_LOG', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { event_id: audit.event_id }, row: audit },\n    ],\n    topic_write_plan: topicWrite ? [topicWrite] : [],\n    commit_plan: commitOperationPlan({ operation, audit, session, topic: topicWrite ? topic : null, now }),\n  };\n}\n\nconst trigger = $('Execute Workflow Trigger').first()?.json ?? {};\nconst input = $input.first()?.json ?? {};\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst envelope = trigger.envelope ?? trigger;\nconst topics = gateway.response?.data?.config_tables?.CONFIG_TOPIC ?? [];\nconst branch = (gateway.response?.data?.config_tables?.CONFIG_BRANCH ?? []).find((row) => String(row.branch_id || '').trim() === String(envelope.branch_id || '').trim()) || { branch_id: envelope.branch_id };\nconst configGlobal = gateway.response?.data?.config_tables?.CONFIG_GLOBAL ?? [];\nconst snapshotId = envelope.payload?.config_snapshot_id || gateway.response?.config_snapshot_id || null;\nconst createdTopic = trigger.created_topic || input.created_topic || input.body || (input.result || input.error ? input : null);\nconst rows = (() => { try { return $items('Read PHIEN_KIEM_KE').map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); } catch { return []; } })();\nconst result = openOrReuseInventorySession({ envelope, configSnapshotId: snapshotId, topics, sessions: rows, branch, configGlobal, createdTopic, now: new Date().toISOString() });\nreturn [{ json: result }];"
+      },
+      "id": "kkb-v2-open-session-with-created-topic",
+      "name": "Open Session With Created Topic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();"
+      },
+      "id": "kkb-v2-select-session-result",
+      "name": "Select Session Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{($json.write_plan?.length ?? 0) > 0}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-session-write-required-",
+      "name": "Session write required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'OPERATION' && item.phase === 'PREPARE'); return entry?.row ? [{json: entry.row}] : [];"
+      },
+      "id": "kkb-v2-prepare-operation-row",
+      "name": "Prepare OPERATION row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "OPERATION",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "operation_id"
+          ]
+        }
+      },
+      "id": "kkb-v2-prepare-operation",
+      "name": "Prepare OPERATION",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1820,
+        -240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{!!($('Select Session Result').first()?.json?.write_plan ?? []).some((entry) => entry.sheet === 'CONFIG_TOPIC' && entry.phase === 'PREPARE')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-topic-mapping-write-required-",
+      "name": "Topic mapping write required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2080,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'CONFIG_TOPIC' && item.phase === 'PREPARE'); return entry?.row ? [{json: entry.row}] : [];"
+      },
+      "id": "kkb-v2-prepare-config-topic-row",
+      "name": "Prepare CONFIG_TOPIC row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CONFIG_TOPIC",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "topic_id"
+          ]
+        }
+      },
+      "id": "kkb-v2-prepare-config-topic",
+      "name": "Prepare CONFIG_TOPIC",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2600,
+        -480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{!!($('Select Session Result').first()?.json?.write_plan ?? []).some((entry) => entry.sheet === 'PHIEN_KIEM_KE' && entry.phase === 'PREPARE')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-new-session-row-required-",
+      "name": "New session row required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2080,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'PHIEN_KIEM_KE' && item.phase === 'PREPARE'); return entry?.row ? [{json: entry.row}] : [];"
       },
       "id": "kkb-v2-prepare-phien-kiem-ke-row",
       "name": "Prepare PHIEN_KIEM_KE row",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1300,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const result = $('Open or Reuse Inventory Session').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'EVENT_LOG'); return entry?.row ? [{json: entry.row}] : [];"
-      },
-      "id": "kkb-v2-prepare-event-log-row",
-      "name": "Prepare EVENT_LOG row",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1300,
-        100
+        2340,
+        -360
       ]
     },
     {
@@ -141,19 +421,32 @@
           ]
         }
       },
-      "id": "kkb-v2-write-phien-kiem-ke",
-      "name": "Write PHIEN_KIEM_KE",
+      "id": "kkb-v2-prepare-phien-kiem-ke",
+      "name": "Prepare PHIEN_KIEM_KE",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1560,
-        -100
+        2600,
+        -360
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'EVENT_LOG' && item.phase === 'PREPARE'); return entry?.row ? [{json: entry.row}] : [];"
+      },
+      "id": "kkb-v2-prepare-event-log-row",
+      "name": "Prepare EVENT_LOG row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        -100
+      ]
     },
     {
       "parameters": {
@@ -178,13 +471,13 @@
           ]
         }
       },
-      "id": "kkb-v2-write-event-log",
-      "name": "Write EVENT_LOG",
+      "id": "kkb-v2-prepare-event-log",
+      "name": "Prepare EVENT_LOG",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1560,
-        100
+        2600,
+        -100
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -194,15 +487,423 @@
     },
     {
       "parameters": {
-        "jsCode": "return $('Open or Reuse Inventory Session').all();"
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{!!($('Select Session Result').first()?.json?.commit_plan ?? []).some((entry) => entry.sheet === 'CONFIG_TOPIC' && entry.phase === 'COMMIT')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-topic-mapping-commit-required-",
+      "name": "Topic mapping commit required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2860,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.commit_plan || []).find((item) => item.sheet === 'CONFIG_TOPIC' && item.phase === 'COMMIT'); return entry ? [{json: {...entry.match, ...entry.patch}}] : [];"
+      },
+      "id": "kkb-v2-commit-config-topic-row",
+      "name": "Commit CONFIG_TOPIC row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        -460
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CONFIG_TOPIC",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "topic_id": "={{$json.topic_id}}",
+            "message_thread_id": "={{$json.message_thread_id}}",
+            "trang_thai": "={{$json.trang_thai}}"
+          },
+          "matchingColumns": [
+            "topic_id"
+          ],
+          "schema": [
+            {
+              "id": "topic_id",
+              "displayName": "topic_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_thread_id",
+              "displayName": "message_thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "trang_thai",
+              "displayName": "trang_thai",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-commit-config-topic",
+      "name": "Commit CONFIG_TOPIC",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3380,
+        -460
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{!!($('Select Session Result').first()?.json?.commit_plan ?? []).some((entry) => entry.sheet === 'PHIEN_KIEM_KE' && entry.phase === 'COMMIT')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-session-commit-required-",
+      "name": "Session commit required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3640,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.commit_plan || []).find((item) => item.sheet === 'PHIEN_KIEM_KE' && item.phase === 'COMMIT'); return entry ? [{json: {...entry.match, ...entry.patch}}] : [];"
+      },
+      "id": "kkb-v2-commit-phien-kiem-ke-row",
+      "name": "Commit PHIEN_KIEM_KE row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3900,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "session_id": "={{$json.session_id}}",
+            "status": "={{$json.status}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "session_id"
+          ],
+          "schema": [
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-commit-phien-kiem-ke",
+      "name": "Commit PHIEN_KIEM_KE",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3380,
+        -240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.commit_plan || []).find((item) => item.sheet === 'EVENT_LOG' && item.phase === 'COMMIT'); return entry ? [{json: {...entry.match, ...entry.patch}}] : [];"
+      },
+      "id": "kkb-v2-commit-event-log-row",
+      "name": "Commit EVENT_LOG row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3900,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "EVENT_LOG",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{$json.event_id}}",
+            "trang_thai": "={{$json.trang_thai}}"
+          },
+          "matchingColumns": [
+            "event_id"
+          ],
+          "schema": [
+            {
+              "id": "event_id",
+              "displayName": "event_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "trang_thai",
+              "displayName": "trang_thai",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-commit-event-log",
+      "name": "Commit EVENT_LOG",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3380,
+        -20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.commit_plan || []).find((item) => item.sheet === 'OPERATION' && item.phase === 'COMMIT'); return entry ? [{json: {...entry.match, ...entry.patch}}] : [];"
+      },
+      "id": "kkb-v2-commit-operation-row",
+      "name": "Commit OPERATION row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4420,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "OPERATION",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation_id": "={{$json.operation_id}}",
+            "status": "={{$json.status}}",
+            "actual_row_count": "={{$json.actual_row_count}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "operation_id"
+          ],
+          "schema": [
+            {
+              "id": "operation_id",
+              "displayName": "operation_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "actual_row_count",
+              "displayName": "actual_row_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-commit-operation",
+      "name": "Commit OPERATION",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3900,
+        -20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $('Select Session Result').all();"
       },
       "id": "kkb-v2-return-inventory-session-result",
       "name": "Return Inventory Session Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1820,
-        0
+        4680,
+        -20
       ]
     }
   ],
@@ -255,10 +956,165 @@
       "main": [
         [
           {
+            "node": "Topic creation required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Topic creation required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Topic Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Select Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Telegram Topic Request": {
+      "main": [
+        [
+          {
+            "node": "Create Telegram Forum Topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Telegram Forum Topic": {
+      "main": [
+        [
+          {
+            "node": "Open Session With Created Topic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open Session With Created Topic": {
+      "main": [
+        [
+          {
+            "node": "Select Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Session Result": {
+      "main": [
+        [
+          {
+            "node": "Session write required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session write required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare OPERATION row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Inventory Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OPERATION row": {
+      "main": [
+        [
+          {
+            "node": "Prepare OPERATION",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OPERATION": {
+      "main": [
+        [
+          {
+            "node": "Topic mapping write required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Topic mapping write required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare CONFIG_TOPIC row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "New session row required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare CONFIG_TOPIC row": {
+      "main": [
+        [
+          {
+            "node": "Prepare CONFIG_TOPIC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare CONFIG_TOPIC": {
+      "main": [
+        [
+          {
+            "node": "New session row required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New session row required?": {
+      "main": [
+        [
+          {
             "node": "Prepare PHIEN_KIEM_KE row",
             "type": "main",
             "index": 0
-          },
+          }
+        ],
+        [
           {
             "node": "Prepare EVENT_LOG row",
             "type": "main",
@@ -271,7 +1127,18 @@
       "main": [
         [
           {
-            "node": "Write PHIEN_KIEM_KE",
+            "node": "Prepare PHIEN_KIEM_KE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PHIEN_KIEM_KE": {
+      "main": [
+        [
+          {
+            "node": "Prepare EVENT_LOG row",
             "type": "main",
             "index": 0
           }
@@ -282,25 +1149,138 @@
       "main": [
         [
           {
-            "node": "Write EVENT_LOG",
+            "node": "Prepare EVENT_LOG",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Write PHIEN_KIEM_KE": {
+    "Prepare EVENT_LOG": {
       "main": [
         [
           {
-            "node": "Return Inventory Session Result",
+            "node": "Topic mapping commit required?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Write EVENT_LOG": {
+    "Topic mapping commit required?": {
+      "main": [
+        [
+          {
+            "node": "Commit CONFIG_TOPIC row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Session commit required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit CONFIG_TOPIC row": {
+      "main": [
+        [
+          {
+            "node": "Commit CONFIG_TOPIC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit CONFIG_TOPIC": {
+      "main": [
+        [
+          {
+            "node": "Session commit required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session commit required?": {
+      "main": [
+        [
+          {
+            "node": "Commit PHIEN_KIEM_KE row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Commit EVENT_LOG row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit PHIEN_KIEM_KE row": {
+      "main": [
+        [
+          {
+            "node": "Commit PHIEN_KIEM_KE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit PHIEN_KIEM_KE": {
+      "main": [
+        [
+          {
+            "node": "Commit EVENT_LOG row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit EVENT_LOG row": {
+      "main": [
+        [
+          {
+            "node": "Commit EVENT_LOG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit EVENT_LOG": {
+      "main": [
+        [
+          {
+            "node": "Commit OPERATION row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit OPERATION row": {
+      "main": [
+        [
+          {
+            "node": "Commit OPERATION",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit OPERATION": {
       "main": [
         [
           {

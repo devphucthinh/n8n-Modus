@@ -18,6 +18,8 @@
 
 `CONFIG_SNAPSHOT`, `OPERATION` và `ERROR_BIA` phải được bảo vệ khỏi chỉnh sửa trực tiếp. Điều chỉnh dữ liệu lịch sử dùng workflow adjustment/versioned record, không xóa/sửa hàng đã commit.
 
+Dispatcher dùng các khóa `CONFIG_GLOBAL` `DISPATCHER_NOTIFICATION_CHAT_ID`, `DISPATCHER_NOTIFICATION_THREAD_ID` và `DISPATCHER_HEARTBEAT_THRESHOLD`. Khi `CONFIG_TOPIC` chưa có topic `KIEM_KE` active, WF05 dùng `INVENTORY_TOPIC_NAME_TEMPLATE` cùng `CONFIG_BRANCH.forum_chat_id` để tạo topic Telegram rồi ghi mapping theo staged operation; không đặt chat ID, thread ID hoặc tên topic trong workflow.
+
 ## Checklist cấu hình Google Sheet
 
 1. Tạo bản sao phục hồi của live Google Sheet trước khi thêm tab.
