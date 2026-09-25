@@ -112,7 +112,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const routerText = (value) => (value == null ? '' : String(value).trim());\nconst routerActive = (row) => routerText(row?.trang_thai).toUpperCase() === 'ACTIVE';\n\nfunction routerMessages(gatewayResult, context) {\n  const map = new Map(Object.entries(gatewayResult?.response?.messages ?? {}));\n  for (const row of context?.CONFIG_THONG_BAO ?? []) {\n    if (routerActive(row)) map.set(routerText(row.message_key), routerText(row.message_text));\n  }\n  return map;\n}\n\nfunction routerRender(template, values) {\n  return routerText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => routerText(values[key]));\n}\n\nfunction routerErrorText(gatewayResult, context, errorCode, errorId) {\n  const map = routerMessages(gatewayResult, context);\n  const key = errorCode === 'COMMAND_NOT_AVAILABLE' ? 'COMMAND_NOT_AVAILABLE' : errorCode === 'USER_NOT_ACTIVE' ? 'USER_NOT_ACTIVE' : 'ERROR_GENERIC';\n  const response = gatewayResult?.response ?? {};\n  const safeErrorId = routerText(errorId || response.error_id) || 'unknown';\n  return routerRender(map.get(key) || map.get('ERROR_GENERIC') || 'ERROR error_id={error_id}', { error_id: safeErrorId }).slice(0, 4096);\n}\n\nfunction routerStatusText(gatewayResult, context) {\n  const response = gatewayResult?.response ?? {};\n  const messages = routerMessages(gatewayResult, context);\n  const lines = [\n    routerRender(messages.get('STATUS_HEADER'), response),\n    routerRender(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),\n    routerRender(messages.get('STATUS_CONFIG_LINE'), response),\n    routerRender(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n    ...(response.active_branches ?? []).map((branch) => routerRender(messages.get('STATUS_BRANCH_LINE'), branch)),\n    routerRender(messages.get('STATUS_MAINTENANCE_LINE'), response),\n  ];\n  return lines.filter(Boolean).join('\\n').slice(0, 4096);\n}\n\nfunction routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds) {\n  const permission = routerText(row.permission_code);\n  if (!permission) return ['/help', '/trangthai'].includes(routerText(row.command_text).toLowerCase());\n  const user = (context.CONFIG_USER ?? []).find((candidate) => routerText(candidate.user_id) === routerText(actorUserId));\n  if (!user || !routerActive(user)) return false;\n  const permissions = new Set((config.CONFIG_PERMISSION ?? []).filter(routerActive).map((candidate) => routerText(candidate.permission_code)));\n  if (!permissions.has(permission)) return false;\n  const roles = new Set((config.CONFIG_ROLE ?? []).filter(routerActive).map((candidate) => routerText(candidate.role_code)));\n  const mappings = (config.CONFIG_ROLE_PERMISSION ?? []).filter((candidate) => routerActive(candidate) && routerText(candidate.permission_code) === permission);\n  const topicType = routerText(row.topic_type);\n  const topics = (config.CONFIG_TOPIC ?? []).filter((candidate) => routerActive(candidate)\n    && activeBranchIds.has(routerText(candidate.branch_id))\n    && routerText(candidate.topic_type) === topicType);\n  const commandText = routerText(row.command_text).toLowerCase();\n  return (config.CONFIG_USER_ROLE ?? []).some((assignment) => routerActive(assignment)\n    && routerText(assignment.user_id) === routerText(actorUserId)\n    && routerWithinWindow(assignment, now)\n    && roles.has(routerText(assignment.role_code))\n    && mappings.some((mapping) => routerText(mapping.role_code) === routerText(assignment.role_code))\n    && (commandText !== '/retry' || routerText(assignment.role_code) === 'ADMIN')\n    && (routerText(assignment.branch_id) === '*' ? (!topicType || topics.length > 0) : (topicType && topics.some((topic) => routerText(topic.branch_id) === routerText(assignment.branch_id)))));\n}\n\nfunction routerHelpText(config, context, actorUserId, now, activeBranchIds) {\n  const rows = (config.CONFIG_LENH ?? []).filter(routerActive)\n    .filter((row) => routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds))\n    .sort((left, right) => Number(routerText(left.ordinal) || 0) - Number(routerText(right.ordinal) || 0));\n  const messages = routerMessages({ response: { messages: {} } }, context);\n  const lines = [];\n  if (messages.get('HELP_HEADER')) lines.push(routerText(messages.get('HELP_HEADER')));\n  for (const row of rows) {\n    const command = routerText(row.command_text) || routerText(row.command_code);\n    const syntax = routerText(row.syntax) || command;\n    lines.push(`${command} — ${routerText(row.description_vi)}`);\n    lines.push(`  Cú pháp: ${syntax}`);\n    lines.push(`  Quyền: ${routerText(row.permission_code)}`);\n    lines.push(`  Ví dụ: ${routerText(row.example) || syntax}`);\n  }\n  return lines.join('\\n');\n}\n\nfunction routerAuditPlan(normalized, context, errorCode, topic, now) {\n  if (!Array.isArray(context?.EVENT_LOG)) return [];\n  const eventKey = routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.operation_id);\n  const eventId = `evt-${eventKey}-${routerText(errorCode).toLowerCase()}`;\n  if (context.EVENT_LOG.some((row) => routerText(row.event_id) === eventId)) return [];\n  return [{\n    sheet: 'EVENT_LOG',\n    action: 'APPEND',\n    row: {\n      event_id: eventId,\n      event_type: 'TELEGRAM_ACCESS',\n      request_id: routerText(normalized?.envelope?.request_id),\n      operation_id: routerText(normalized?.envelope?.operation_id),\n      actor_user_id: routerText(normalized?.envelope?.actor_user_id),\n      branch_id: routerText(topic?.branch_id),\n      topic_type: routerText(topic?.topic_type),\n      command: routerText(normalized?.command),\n      outcome: 'DENIED',\n      error_code: routerText(errorCode),\n      created_at: now,\n      trang_thai: 'COMMITTED',\n    },\n  }];\n}\n\nfunction routerWithinWindow(row, now) {\n  const current = Date.parse(now);\n  const from = routerText(row.effective_from);\n  const to = routerText(row.effective_to);\n  if (from && Number.isNaN(Date.parse(from))) return false;\n  if (to && Number.isNaN(Date.parse(to))) return false;\n  if ((from || to) && Number.isNaN(current)) return false;\n  return (!from || current >= Date.parse(from)) && (!to || current <= Date.parse(to));\n}\n\nfunction routerAuthorized({ actorUserId, command, topic, config, context, now, activeBranchIds }) {\n  const user = (context.CONFIG_USER ?? []).find((row) => routerText(row.user_id) === routerText(actorUserId));\n  if (!user || !routerActive(user)) return false;\n  if (command === '/trangthai') return true;\n  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === routerText(command).toLowerCase());\n  const permission = routerText(commandRow?.permission_code);\n  if (!permission) return ['/help', '/trangthai'].includes(routerText(command).toLowerCase());\n  if (!topic || !routerActive(topic)) return false;\n  if (!activeBranchIds.has(routerText(topic.branch_id))) return false;\n  const permissions = new Set((config.CONFIG_PERMISSION ?? []).filter(routerActive).map((row) => routerText(row.permission_code)));\n  if (!permissions.has(permission)) return false;\n  const roles = new Set((config.CONFIG_ROLE ?? []).filter(routerActive).map((row) => routerText(row.role_code)));\n  const mappings = (config.CONFIG_ROLE_PERMISSION ?? []).filter((row) => routerActive(row) && routerText(row.permission_code) === permission);\n  return (config.CONFIG_USER_ROLE ?? []).some((row) => routerActive(row)\n    && routerText(row.user_id) === routerText(actorUserId)\n    && routerWithinWindow(row, now)\n    && (routerText(row.branch_id) === '*' || routerText(row.branch_id) === routerText(topic.branch_id))\n    && roles.has(routerText(row.role_code))\n    && mappings.some((mapping) => routerText(mapping.role_code) === routerText(row.role_code)));\n}\n\nfunction decideRouterResponse({ normalized, gatewayResult, now = new Date().toISOString() } = {}) {\n  const response = gatewayResult?.response ?? {};\n  const config = response.data?.config_tables ?? {};\n  const context = response.data?.context_tables ?? {};\n  const activeBranchIds = new Set((response.active_branches ?? []).map((branch) => routerText(branch.branch_id)).filter(Boolean));\n  const callbackToken = routerText(normalized?.callback?.data);\n  const callbackCommand = callbackToken && !routerText(normalized?.command)\n    ? (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && [row.command_code, row.command_text].map((value) => routerText(value).toLowerCase()).includes(callbackToken.toLowerCase()))?.command_text\n    : null;\n  const command = routerText(callbackCommand || normalized?.command).toLowerCase();\n  const base = { kind: 'DENY', write_plan: [] };\n  if (!gatewayResult?.ok) return { decision: { kind: 'DENY', write_plan: response.error_code === 'USER_NOT_ACTIVE' ? routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', null, now) : [] }, text: routerErrorText(gatewayResult, context, response.error_code, response.error_id) };\n  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: [] }, text: routerStatusText(gatewayResult, context) };\n  const operationKeys = [normalized?.envelope?.operation_id, normalized?.envelope?.request_id, normalized?.envelope?.payload?.idempotency_key].map(routerText).filter(Boolean);\n  if ((context.OPERATION ?? []).some((row) => ['COMMITTED', 'PREPARED'].includes(routerText(row.status).toUpperCase()) && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).some((value) => operationKeys.includes(value)))) {\n    const messages = routerMessages(gatewayResult, context);\n    return { decision: { kind: 'DUPLICATE', write_plan: [] }, text: routerText(messages.get('ROUTER_DUPLICATE')) };\n  }\n  if (command === '/help') return { decision: { kind: 'HELP', write_plan: [] }, text: routerHelpText(config, context, normalized?.envelope?.actor_user_id, now, activeBranchIds) };\n  if (command === '/retry') {\n    const errorId = routerText(normalized?.args?.[0]);\n    const retryCommand = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === '/retry');\n    const retryPermission = routerText(retryCommand?.permission_code);\n    const user = (context.CONFIG_USER ?? []).find((row) => routerText(row.user_id) === routerText(normalized?.envelope?.actor_user_id));\n    const activeRoles = new Set((config.CONFIG_ROLE ?? []).filter(routerActive).map((row) => routerText(row.role_code)));\n    const activePermissions = new Set((config.CONFIG_PERMISSION ?? []).filter(routerActive).map((row) => routerText(row.permission_code)));\n    const hasAdmin = retryPermission && user && routerActive(user) && (config.CONFIG_USER_ROLE ?? []).some((assignment) => routerActive(assignment)\n      && routerText(assignment.user_id) === routerText(normalized?.envelope?.actor_user_id)\n      && routerText(assignment.role_code) === 'ADMIN'\n      && routerText(assignment.branch_id) === '*'\n      && routerWithinWindow(assignment, now)\n      && activePermissions.has(retryPermission)\n      && activeRoles.has(routerText(assignment.role_code))\n      && (config.CONFIG_ROLE_PERMISSION ?? []).some((mapping) => routerActive(mapping)\n        && routerText(mapping.role_code) === routerText(assignment.role_code)\n        && routerText(mapping.permission_code) === retryPermission));\n    const error = (context.ERROR_BIA ?? []).find((row) => routerText(row.error_id) === errorId && routerText(row.status).toUpperCase() !== 'RESOLVED');\n    if (!hasAdmin) return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', null, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${errorId || 'unknown'}-retry-denied`) };\n    if (!error) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_FOUND', `err-${errorId || 'unknown'}-not-found`) };\n    if (!['YES', 'TRUE', '1'].includes(routerText(error.retryable).toUpperCase())) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_RETRYABLE', errorId) };\n    const operationId = routerText(error.operation_id);\n    const idempotencyKey = routerText(error.request_id) || operationId;\n    const messages = routerMessages(gatewayResult, context);\n    return { decision: { kind: 'RETRY', retry: { error_id: errorId, operation_id: operationId, idempotency_key: idempotencyKey }, write_plan: [] }, text: routerText(messages.get('ROUTER_RETRY_ACCEPTED')) };\n  }\n  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === command);\n  if (!commandRow) return { decision: base, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}`) };\n  const topic = (config.CONFIG_TOPIC ?? []).find((row) => routerActive(row)\n     && activeBranchIds.has(routerText(row.branch_id))\n    && routerText(row.chat_id) === routerText(normalized?.reply_target?.chat_id)\n    && routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id)\n    && (!routerText(commandRow.topic_type) || routerText(row.topic_type) === routerText(commandRow.topic_type)));\n  if (!routerAuthorized({ actorUserId: normalized?.envelope?.actor_user_id, command, topic, config, context, now, activeBranchIds })) {\n    return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${routerText(normalized?.envelope?.operation_id)}-user_not_authorized`) };\n  }\n  const messages = routerMessages(gatewayResult, context);\n  return {\n    decision: {\n      kind: 'ROUTE',\n      route: {\n        command_code: routerText(commandRow.command_code),\n        topic_type: routerText(commandRow.topic_type),\n        worker_workflow: routerText(commandRow.worker_workflow),\n        branch_id: routerText(topic?.branch_id),\n        permission_code: routerText(commandRow.permission_code) || null,\n        operation_id: routerText(normalized?.envelope?.operation_id),\n        idempotency_key: routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id),\n      },\n      reservation: {\n        sheet: 'OPERATION',\n        action: 'APPEND',\n        row: {\n          operation_id: routerText(normalized?.envelope?.operation_id),\n          request_id: routerText(normalized?.envelope?.request_id),\n          operation_type: 'ROUTE_COMMAND',\n          idempotency_key: routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id),\n          expected_row_count: '1',\n          actual_row_count: '',\n          checksum: '',\n          status: 'PREPARED',\n          error_id: '',\n          created_at: now,\n          updated_at: now,\n        },\n      },\n      write_plan: [],\n    },\n    text: routerText(messages.get('ROUTER_COMMAND_ACCEPTED')),\n  };\n}\n\n\nconst normalized = $('Normalize Telegram Update').first()?.json ?? {};\nconst gatewayResult = $input.first()?.json ?? {};\nconst result = decideRouterResponse({ normalized, gatewayResult, now: new Date().toISOString() });\nreturn [{ json: { envelope: normalized.envelope, reply_target: normalized.reply_target, decision: result.decision, text: result.text } }];"
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\n\nfunction isWithinEffectiveWindow(row, now) {\n  const current = Date.parse(now);\n  const from = asText(row?.effective_from);\n  const to = asText(row?.effective_to);\n  if (from && Number.isNaN(Date.parse(from))) return false;\n  if (to && Number.isNaN(Date.parse(to))) return false;\n  if ((from || to) && Number.isNaN(current)) return false;\n  return (!from || current >= Date.parse(from)) && (!to || current <= Date.parse(to));\n}\n\n\nconst routerText = (value) => (value == null ? '' : String(value).trim());\nconst routerActive = (row) => routerText(row?.trang_thai).toUpperCase() === 'ACTIVE';\n\nfunction routerMessages(gatewayResult, context) {\n  const map = new Map(Object.entries(gatewayResult?.response?.messages ?? {}));\n  for (const row of context?.CONFIG_THONG_BAO ?? []) {\n    if (routerActive(row)) map.set(routerText(row.message_key), routerText(row.message_text));\n  }\n  return map;\n}\n\nfunction routerRender(template, values) {\n  return routerText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => routerText(values[key]));\n}\n\nfunction routerErrorText(gatewayResult, context, errorCode, errorId) {\n  const map = routerMessages(gatewayResult, context);\n  const key = errorCode === 'COMMAND_NOT_AVAILABLE' ? 'COMMAND_NOT_AVAILABLE' : errorCode === 'USER_NOT_ACTIVE' ? 'USER_NOT_ACTIVE' : 'ERROR_GENERIC';\n  const response = gatewayResult?.response ?? {};\n  const safeErrorId = routerText(errorId || response.error_id) || 'unknown';\n  return routerRender(map.get(key) || map.get('ERROR_GENERIC') || 'ERROR error_id={error_id}', { error_id: safeErrorId }).slice(0, 4096);\n}\n\nfunction routerStatusText(gatewayResult, context) {\n  const response = gatewayResult?.response ?? {};\n  const messages = routerMessages(gatewayResult, context);\n  const lines = [\n    routerRender(messages.get('STATUS_HEADER'), response),\n    routerRender(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),\n    routerRender(messages.get('STATUS_CONFIG_LINE'), response),\n    routerRender(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n    ...(response.active_branches ?? []).map((branch) => routerRender(messages.get('STATUS_BRANCH_LINE'), branch)),\n    routerRender(messages.get('STATUS_MAINTENANCE_LINE'), response),\n  ];\n  return lines.filter(Boolean).join('\\n').slice(0, 4096);\n}\n\nfunction routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds) {\n  if (routerText(row.topic_type) && !routerText(row.worker_workflow)) return false;\n  const permission = routerText(row.permission_code);\n  if (!permission) return ['/help', '/trangthai'].includes(routerText(row.command_text).toLowerCase());\n  const user = (context.CONFIG_USER ?? []).find((candidate) => routerText(candidate.user_id) === routerText(actorUserId));\n  if (!user || !routerActive(user)) return false;\n  const permissions = new Set((config.CONFIG_PERMISSION ?? []).filter(routerActive).map((candidate) => routerText(candidate.permission_code)));\n  if (!permissions.has(permission)) return false;\n  const roles = new Set((config.CONFIG_ROLE ?? []).filter(routerActive).map((candidate) => routerText(candidate.role_code)));\n  const mappings = (config.CONFIG_ROLE_PERMISSION ?? []).filter((candidate) => routerActive(candidate) && routerText(candidate.permission_code) === permission);\n  const topicType = routerText(row.topic_type);\n  const topics = (config.CONFIG_TOPIC ?? []).filter((candidate) => routerActive(candidate)\n    && activeBranchIds.has(routerText(candidate.branch_id))\n    && (!topicType || routerText(candidate.topic_type) === topicType));\n  return (config.CONFIG_USER_ROLE ?? []).some((assignment) => routerActive(assignment)\n    && routerText(assignment.user_id) === routerText(actorUserId)\n    && isWithinEffectiveWindow(assignment, now)\n    && roles.has(routerText(assignment.role_code))\n    && mappings.some((mapping) => routerText(mapping.role_code) === routerText(assignment.role_code))\n    && topics.some((topic) => routerText(assignment.branch_id) === '*' || routerText(topic.branch_id) === routerText(assignment.branch_id)));\n}\n\nfunction routerFindTopic(normalized, config, activeBranchIds, commandRow) {\n  const topicType = routerText(commandRow?.topic_type);\n  return (config.CONFIG_TOPIC ?? []).find((row) => routerActive(row)\n    && activeBranchIds.has(routerText(row.branch_id))\n    && routerText(row.chat_id) === routerText(normalized?.reply_target?.chat_id)\n    && routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id)\n    && (!topicType || routerText(row.topic_type) === topicType));\n}\n\nfunction routerHelpText(config, context, actorUserId, now, activeBranchIds) {\n  const rows = (config.CONFIG_LENH ?? []).filter(routerActive)\n    .filter((row) => routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds))\n    .sort((left, right) => Number(routerText(left.ordinal) || 0) - Number(routerText(right.ordinal) || 0));\n  const messages = routerMessages({ response: { messages: {} } }, context);\n  const lines = [];\n  if (messages.get('HELP_HEADER')) lines.push(routerText(messages.get('HELP_HEADER')));\n  for (const row of rows) {\n    const command = routerText(row.command_text) || routerText(row.command_code);\n    const syntax = routerText(row.syntax) || command;\n    lines.push(`${command} — ${routerText(row.description_vi)}`);\n    lines.push(`  Cú pháp: ${syntax}`);\n    lines.push(`  Quyền: ${routerText(row.permission_code) || 'Không yêu cầu'}`);\n    lines.push(`  Ví dụ: ${routerText(row.example) || syntax}`);\n  }\n  return lines.join('\\n');\n}\n\nfunction routerAuditPlan(normalized, context, errorCode, topic, now) {\n  if (!Array.isArray(context?.EVENT_LOG)) return [];\n  const eventKey = routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.operation_id);\n  const eventId = `evt-${eventKey}-${routerText(errorCode).toLowerCase()}`;\n  if (context.EVENT_LOG.some((row) => routerText(row.event_id) === eventId)) return [];\n  return [{\n    sheet: 'EVENT_LOG',\n    action: 'APPEND',\n    row: {\n      event_id: eventId,\n      event_type: 'TELEGRAM_ACCESS',\n      request_id: routerText(normalized?.envelope?.request_id),\n      operation_id: routerText(normalized?.envelope?.operation_id),\n      actor_user_id: routerText(normalized?.envelope?.actor_user_id),\n      branch_id: routerText(topic?.branch_id),\n      topic_type: routerText(topic?.topic_type),\n      command: routerText(normalized?.command),\n      outcome: 'DENIED',\n      error_code: routerText(errorCode),\n      created_at: now,\n      trang_thai: 'COMMITTED',\n    },\n  }];\n}\n\nfunction routerAuthorized({ actorUserId, command, topic, config, context, now, activeBranchIds }) {\n  const user = (context.CONFIG_USER ?? []).find((row) => routerText(row.user_id) === routerText(actorUserId));\n  if (!user || !routerActive(user)) return false;\n  if (command === '/trangthai') return true;\n  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === routerText(command).toLowerCase());\n  const permission = routerText(commandRow?.permission_code);\n  if (!permission) return ['/help', '/trangthai'].includes(routerText(command).toLowerCase());\n  if (!topic || !routerActive(topic)) return false;\n  if (!activeBranchIds.has(routerText(topic.branch_id))) return false;\n  const permissions = new Set((config.CONFIG_PERMISSION ?? []).filter(routerActive).map((row) => routerText(row.permission_code)));\n  if (!permissions.has(permission)) return false;\n  const roles = new Set((config.CONFIG_ROLE ?? []).filter(routerActive).map((row) => routerText(row.role_code)));\n  const mappings = (config.CONFIG_ROLE_PERMISSION ?? []).filter((row) => routerActive(row) && routerText(row.permission_code) === permission);\n  return (config.CONFIG_USER_ROLE ?? []).some((row) => routerActive(row)\n    && routerText(row.user_id) === routerText(actorUserId)\n    && isWithinEffectiveWindow(row, now)\n    && (routerText(row.branch_id) === '*' || routerText(row.branch_id) === routerText(topic.branch_id))\n    && roles.has(routerText(row.role_code))\n    && mappings.some((mapping) => routerText(mapping.role_code) === routerText(row.role_code)));\n}\n\nfunction decideRouterResponse({ normalized, gatewayResult, now = new Date().toISOString() } = {}) {\n  const response = gatewayResult?.response ?? {};\n  const config = response.data?.config_tables ?? {};\n  const context = response.data?.context_tables ?? {};\n  const activeBranchIds = new Set((response.active_branches ?? []).map((branch) => routerText(branch.branch_id)).filter(Boolean));\n  const callbackToken = routerText(normalized?.callback?.data);\n  const callbackCommand = callbackToken && !routerText(normalized?.command)\n    ? (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && [row.command_code, row.command_text].map((value) => routerText(value).toLowerCase()).includes(callbackToken.toLowerCase()))?.command_text\n    : null;\n  const command = routerText(callbackCommand || normalized?.command).toLowerCase();\n  const base = { kind: 'DENY', write_plan: [] };\n  if (!gatewayResult?.ok) return { decision: { kind: 'DENY', write_plan: response.error_code === 'USER_NOT_ACTIVE' ? routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', null, now) : [] }, text: routerErrorText(gatewayResult, context, response.error_code, response.error_id) };\n  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: [] }, text: routerStatusText(gatewayResult, context) };\n  const operationKeys = [normalized?.envelope?.operation_id, normalized?.envelope?.request_id, normalized?.envelope?.payload?.idempotency_key].map(routerText).filter(Boolean);\n  if ((context.OPERATION ?? []).some((row) => ['COMMITTED', 'PREPARED', 'FAILED'].includes(routerText(row.status).toUpperCase()) && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).some((value) => operationKeys.includes(value)))) {\n    const messages = routerMessages(gatewayResult, context);\n    return { decision: { kind: 'DUPLICATE', write_plan: [] }, text: routerText(messages.get('ROUTER_DUPLICATE')) };\n  }\n  if (command === '/help') return { decision: { kind: 'HELP', write_plan: [] }, text: routerHelpText(config, context, normalized?.envelope?.actor_user_id, now, activeBranchIds) };\n  if (command === '/retry') {\n    const errorId = routerText(normalized?.args?.[0]);\n    const retryCommand = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === '/retry');\n    const topic = routerFindTopic(normalized, config, activeBranchIds, retryCommand);\n    const error = (context.ERROR_BIA ?? []).find((row) => routerText(row.error_id) === errorId && routerText(row.status).toUpperCase() !== 'RESOLVED');\n    if (!retryCommand || !routerAuthorized({ actorUserId: normalized?.envelope?.actor_user_id, command: '/retry', topic, config, context, now, activeBranchIds })) {\n      return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${errorId || 'unknown'}-retry-denied`) };\n    }\n    if (!error) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_FOUND', `err-${errorId || 'unknown'}-not-found`) };\n    if (!['YES', 'TRUE', '1'].includes(routerText(error.retryable).toUpperCase())) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_RETRYABLE', errorId) };\n    const operationId = routerText(error.operation_id);\n    const operation = (context.OPERATION ?? []).find((row) => routerText(row.operation_id) === operationId);\n    const idempotencyKey = routerText(operation?.idempotency_key) || routerText(error.request_id) || operationId;\n    const retry = { error_id: errorId, operation_id: operationId, idempotency_key: idempotencyKey };\n    return {\n      decision: { kind: 'RETRY_UNAVAILABLE', retry, write_plan: [] },\n      text: routerErrorText(gatewayResult, context, 'ERROR_GENERIC', `err-${errorId}-retry-payload-unavailable`),\n    };\n  }\n  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === command);\n  if (!commandRow) return { decision: base, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}`) };\n  const topic = routerFindTopic(normalized, config, activeBranchIds, commandRow);\n  if (!routerAuthorized({ actorUserId: normalized?.envelope?.actor_user_id, command, topic, config, context, now, activeBranchIds })) {\n    return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${routerText(normalized?.envelope?.operation_id)}-user_not_authorized`) };\n  }\n  if (!routerText(commandRow.worker_workflow)) {\n    return { decision: { kind: 'DENY', write_plan: [] }, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}-worker-unavailable`) };\n  }\n  const messages = routerMessages(gatewayResult, context);\n  const idempotencyKey = routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id);\n  const workerEnvelope = {\n    ...normalized.envelope,\n    event_type: 'ROUTE_COMMAND',\n    branch_id: routerText(topic?.branch_id),\n    config_version: routerText(response.config_version) || normalized.envelope.config_version || null,\n    payload: {\n      ...normalized.envelope.payload,\n      command,\n      command_code: routerText(commandRow.command_code),\n      intent: 'ROUTE_COMMAND',\n      topic_type: routerText(commandRow.topic_type),\n      idempotency_key: idempotencyKey,\n    },\n  };\n  const workerFailureId = `err-${routerText(normalized?.envelope?.operation_id)}-worker-failed`;\n  return {\n    decision: {\n      kind: 'ROUTE',\n      worker_envelope: workerEnvelope,\n      worker_failure_error_id: workerFailureId,\n      worker_failure_text: routerErrorText(gatewayResult, context, 'ERROR_GENERIC', workerFailureId),\n      route: {\n        command_code: routerText(commandRow.command_code),\n        topic_type: routerText(commandRow.topic_type),\n        worker_workflow: routerText(commandRow.worker_workflow),\n        branch_id: routerText(topic?.branch_id),\n        permission_code: routerText(commandRow.permission_code) || null,\n        operation_id: routerText(normalized?.envelope?.operation_id),\n        idempotency_key: idempotencyKey,\n      },\n      reservation: {\n        sheet: 'OPERATION',\n        action: 'APPEND',\n        row: {\n          operation_id: routerText(normalized?.envelope?.operation_id),\n          request_id: routerText(normalized?.envelope?.request_id),\n          operation_type: 'ROUTE_COMMAND',\n          idempotency_key: routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id),\n          expected_row_count: '1',\n          actual_row_count: '',\n          checksum: '',\n          status: 'PREPARED',\n          error_id: '',\n          created_at: now,\n          updated_at: now,\n        },\n      },\n      write_plan: [],\n    },\n    text: routerText(messages.get('ROUTER_COMMAND_ACCEPTED')),\n  };\n}\n\n\nconst normalized = $('Normalize Telegram Update').first()?.json ?? {};\nconst gatewayResult = $input.first()?.json ?? {};\nconst result = decideRouterResponse({ normalized, gatewayResult, now: new Date().toISOString() });\nreturn [{ json: { envelope: normalized.envelope, reply_target: normalized.reply_target, decision: result.decision, text: result.text } }];"
       },
       "id": "kkb-v2-router-decision",
       "name": "Router Decision",
@@ -206,6 +206,292 @@
           "name": "GOOGLE_SHEETS_KKB_V2"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $('Router Decision').first()?.json?.decision ?? {}; if (decision.kind !== 'ROUTE' || !decision.route?.worker_workflow || !decision.worker_envelope) return []; return [{ json: { envelope: decision.worker_envelope } }];"
+      },
+      "id": "kkb-v2-prepare-worker-envelope",
+      "name": "Prepare Worker Envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        -240
+      ],
+      "notes": "Passes only the normalized standard envelope to the worker configured by CONFIG_LENH."
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "={{$('Router Decision').first()?.json?.decision?.route?.worker_workflow ?? ''}}",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-execute-configured-worker",
+      "name": "Execute Configured Worker",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2120,
+        -240
+      ],
+      "notes": "worker_workflow in CONFIG_LENH must be the actual n8n workflow ID. The worker receives { envelope }; it must enforce idempotency with operation_id/idempotency_key.",
+      "onError": "continueErrorOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ok === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-worker-succeeded-",
+      "name": "Worker succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2340,
+        -240
+      ],
+      "notes": "Only an explicit ok=true result allows the Router success acknowledgement."
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $('Router Decision').first()?.json?.decision ?? {}; const row = decision.reservation?.row; if (!row) return []; return [{ json: { idempotency_key: row.idempotency_key, status: 'COMMITTED', actual_row_count: '1', error_id: '', updated_at: new Date().toISOString() } }];"
+      },
+      "id": "kkb-v2-project-operation-committed",
+      "name": "Project OPERATION committed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "OPERATION",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "idempotency_key": "={{$json.idempotency_key}}",
+            "status": "={{$json.status}}",
+            "actual_row_count": "={{$json.actual_row_count}}",
+            "error_id": "={{$json.error_id}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "idempotency_key"
+          ],
+          "schema": [
+            {
+              "id": "idempotency_key",
+              "displayName": "idempotency_key",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "actual_row_count",
+              "displayName": "actual_row_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_id",
+              "displayName": "error_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-update-operation-committed",
+      "name": "Update OPERATION committed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2780,
+        -340
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $('Router Decision').first()?.json?.decision ?? {}; const row = decision.reservation?.row; if (!row) return []; const errorId = String(decision.worker_failure_error_id ?? '').trim() || `err-${String(row.operation_id ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '_')}-worker-failed`; return [{ json: { idempotency_key: row.idempotency_key, status: 'FAILED', error_id: errorId, updated_at: new Date().toISOString() } }];"
+      },
+      "id": "kkb-v2-project-operation-failed",
+      "name": "Project OPERATION failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "OPERATION",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "idempotency_key": "={{$json.idempotency_key}}",
+            "status": "={{$json.status}}",
+            "error_id": "={{$json.error_id}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "idempotency_key"
+          ],
+          "schema": [
+            {
+              "id": "idempotency_key",
+              "displayName": "idempotency_key",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_id",
+              "displayName": "error_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-update-operation-failed",
+      "name": "Update OPERATION failed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2780,
+        -120
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Router Decision').first()?.json ?? {}; return [{ json: { reply_target: source.reply_target, text: source.decision?.worker_failure_text ?? '' } }];"
+      },
+      "id": "kkb-v2-project-worker-failure-reply",
+      "name": "Project Worker Failure Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        -120
+      ],
+      "notes": "Never sends the accepted text when the worker returned false or threw."
     },
     {
       "parameters": {
@@ -509,7 +795,109 @@
       "main": [
         [
           {
+            "node": "Prepare Worker Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Worker Envelope": {
+      "main": [
+        [
+          {
+            "node": "Execute Configured Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Configured Worker": {
+      "main": [
+        [
+          {
+            "node": "Worker succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Project OPERATION failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Worker succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Project OPERATION committed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Project OPERATION failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project OPERATION committed": {
+      "main": [
+        [
+          {
+            "node": "Update OPERATION committed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update OPERATION committed": {
+      "main": [
+        [
+          {
             "node": "Restore Router Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project OPERATION failed": {
+      "main": [
+        [
+          {
+            "node": "Update OPERATION failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update OPERATION failed": {
+      "main": [
+        [
+          {
+            "node": "Project Worker Failure Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Worker Failure Reply": {
+      "main": [
+        [
+          {
+            "node": "Split Router Reply",
             "type": "main",
             "index": 0
           }

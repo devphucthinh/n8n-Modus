@@ -14,7 +14,6 @@ test('WF03 keeps user-facing router messages in Sheet configuration', async () =
   for (const fallback of [
     'Danh sách lệnh Kiểm kê bia V2:',
     'Chưa có mô tả',
-    'Không yêu cầu',
     'Yêu cầu đã được xử lý.',
     'Đã tiếp nhận yêu cầu retry.',
     'Đã tiếp nhận lệnh.',

@@ -65,7 +65,7 @@ this path (`does not dereference optional router reads that were skipped`).
 | Wrong topic/permission | Safe denial; one idempotent `EVENT_LOG` row; no worker call | `<WF03 execution + EVENT_LOG row ref>` | `PENDING` |
 | Same message `update_id` replay | No second route reservation or audit row | `<two execution refs>` | `PENDING` |
 | Same callback ID with a new `update_id` | No second route reservation; Telegram callback is answered | `<two execution refs + callback answer ref>` | `PENDING` |
-| `/retry <error_id>` | Only configured admin can retry a retryable error and original keys are reused | `<WF03 execution ref>` | `PENDING` |
+| `/retry <error_id>` | If source payload is recoverable: reuse original keys and require worker success. With current Sheet schema the expected safe result is fail-closed `retry-payload-unavailable`, no worker call and no success acknowledgement. | `<WF03 execution ref>` | `PENDING` |
 
 ## Sanitized observations — 2026-09-23
 
@@ -77,14 +77,26 @@ These observations are not a complete release gate. The inspected n8n workflow i
 | Valid `/kiemke` | WF03 execution `#152` succeeded; route-reservation and Telegram-reply nodes ran. | `FAIL` — generated WF03 has no worker Execute Workflow node: it reserves the operation and replies, but does not invoke `worker_workflow`; the business command is not fully routed. |
 | `/trangthai` active user; unknown/inactive user; wrong topic/permission; duplicate update; callback replay; `/retry` | No qualifying execution evidence was verified in this review. | `PENDING` |
 
-Local verification at commit `9fa4f1a`: `npm run verify` passed (3 workflows validated; 113 tests passed), and `git diff --check` passed. Code review blockers:
+Local verification at commit `9fa4f1a`: `npm run verify` passed (3 workflows validated; 113 tests passed), and `git diff --check` passed. Findings from that review were:
 
-- `P1` Spec: WF03 never calls the configured worker with the standard envelope; `/retry` also only returns an accepted decision and does not execute the retry.
+- `P1` Spec: WF03 never called the configured worker with the standard envelope; `/retry` only returned an accepted decision and did not execute the retry.
 - `P2` Spec/Standards: retry requires a global `ADMIN` assignment (`branch_id='*'`), rejecting branch-scoped admins allowed by ADR 0021; the hard-coded role check also conflicts with the ADR's config-driven permission mapping.
 - `P2` Spec: `/help` prints an empty `Quyền:` value when a command has no permission code instead of an explicit “Không yêu cầu”.
 - `P3` Standards: effective-date-window validation is duplicated across authorization paths.
 
-Do not merge until the P1/P2 findings are resolved and the P3 is dispositioned. Local checks do not substitute for the remaining live smoke cases.
+## Local implementation status — 2026-09-25
+
+This section records local PR-branch work only; it is not live n8n smoke evidence. No Google Sheet was edited, no workflow was published/activated, and no Telegram smoke command was sent for this revision.
+
+- WF03 now builds a standard worker envelope from the normalized Telegram update, exact topic/branch, active config version, and original `operation_id`/`idempotency_key`. It reads the target workflow ID from `CONFIG_LENH.worker_workflow`, reserves `OPERATION`, waits for the sub-workflow, and only sends the accepted reply after explicit `{ ok: true }`.
+- Missing workflow ID, a false/missing worker result, and a worker execution error do not send the accepted reply. The operation is marked `FAILED` and the user receives a safe generic error.
+- `/retry` now checks the configured command permission against the exact active Telegram topic and preserves the stored `OPERATION.idempotency_key` when available. It does **not** dispatch: `ERROR_BIA` and `OPERATION` currently contain no original payload or durable source reference. It fails closed with an error ID ending `retry-payload-unavailable`. The retry execution acceptance criterion therefore remains **not met**; no column was added to the live Sheet.
+- P2 branch-scoped authorization and `/help`'s explicit `Không yêu cầu` label are implemented locally. Effective-date validation was extracted to one shared helper for the former P3.
+- Regression tests cover missing worker ID, standard envelope identity/configuration, duplicate PREPARED/FAILED operations, branch-scoped retry authorization, missing retry payload, and the n8n dispatch/wait/success-gate graph.
+- Fresh `npm run verify` result on the local PR worktree: 3 workflows validated; 119 tests passed; 0 failed. This does not verify actual n8n Cloud node execution.
+- Google Sheets `appendOrUpdate` is only a sequential duplicate guard, not an atomic claim across simultaneous executions. Workers must still deduplicate by `operation_id`/`idempotency_key`; concurrent execution safety has not been proven live.
+
+P2/P3 items from the earlier review are addressed in local code. The P1 `/retry` replay is still blocked by missing recoverable payload, and all live smoke rows above remain pending until an isolated n8n test worker and test Sheet are configured. Do not merge or close Issue #3 yet.
 
 ## Release gate
 

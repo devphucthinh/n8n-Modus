@@ -64,6 +64,23 @@ for (const filename of files) {
         }
       }
     }
+    if (workflow.name === 'WF03_V2_TELEGRAM_ROUTER') {
+      const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
+      const worker = nodeByName.get('Execute Configured Worker');
+      const workerInput = nodeByName.get('Prepare Worker Envelope');
+      const workerCheck = nodeByName.get('Worker succeeded?');
+      if (!worker || worker.type !== 'n8n-nodes-base.executeWorkflow') errors.push(`${filename}: missing configured worker Execute Workflow node`);
+      if (worker && (worker.parameters?.workflowId?.mode !== 'id' || !/worker_workflow/.test(worker.parameters?.workflowId?.value ?? ''))) errors.push(`${filename}: worker target must be the workflow ID from CONFIG_LENH.worker_workflow`);
+      if (worker && worker.parameters?.options?.waitForSubWorkflow !== true) errors.push(`${filename}: configured worker call must wait for completion`);
+      if (worker && worker.onError !== 'continueErrorOutput') errors.push(`${filename}: configured worker errors must reach the failure path`);
+      if (!workerInput || !/worker_envelope/.test(workerInput.parameters?.jsCode ?? '')) errors.push(`${filename}: missing standard worker envelope projection`);
+      if (!workerCheck || !/ok\s*===\s*true/.test(workerCheck.parameters?.conditions?.conditions?.[0]?.leftValue ?? '')) errors.push(`${filename}: success reply must require explicit worker ok=true`);
+      const outgoing = (name, output = 0) => (workflow.connections?.[name]?.main?.[output] ?? []).map((target) => target.node);
+      if (!outgoing('Append OPERATION reservation').includes('Prepare Worker Envelope')) errors.push(`${filename}: reservation must precede worker dispatch`);
+      if (!outgoing('Execute Configured Worker').includes('Worker succeeded?')) errors.push(`${filename}: worker result must be checked before success`);
+      if (!outgoing('Worker succeeded?', 0).includes('Project OPERATION committed')) errors.push(`${filename}: successful workers must commit OPERATION`);
+      if (!outgoing('Worker succeeded?', 1).includes('Project OPERATION failed') || !outgoing('Execute Configured Worker', 1).includes('Project OPERATION failed')) errors.push(`${filename}: worker false/error results must fail OPERATION`);
+    }
   } catch (error) {
     errors.push(`${filename}: ${error.message}`);
   }

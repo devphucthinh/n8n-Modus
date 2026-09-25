@@ -264,3 +264,41 @@ test('WF03 preserves the reply after audit writes and acknowledges callback quer
   assert.equal(callback.parameters.operation, 'answerQuery');
   assert.deepEqual(router.connections['Normalize Telegram Update'].main[0].map((target) => target.node), ['Status command?', 'Callback query?']);
 });
+
+test('WF03 dispatches the reserved standard envelope to the configured workflow ID and waits for a successful worker result', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  const prepare = router.nodes.find((node) => node.name === 'Prepare Worker Envelope');
+  const worker = router.nodes.find((node) => node.name === 'Execute Configured Worker');
+  const resultCheck = router.nodes.find((node) => node.name === 'Worker succeeded?');
+  const decision = router.nodes.find((node) => node.name === 'Router Decision');
+  const failureReply = router.nodes.find((node) => node.name === 'Project Worker Failure Reply');
+
+  assert.ok(prepare);
+  assert.ok(worker);
+  assert.equal(worker.parameters.workflowId.mode, 'id');
+  assert.match(worker.parameters.workflowId.value, /worker_workflow/);
+  assert.equal(worker.parameters.options.waitForSubWorkflow, true);
+  assert.equal(worker.onError, 'continueErrorOutput');
+  assert.match(prepare.parameters.jsCode, /envelope:\s*decision\.worker_envelope/);
+  assert.match(decision.parameters.jsCode, /event_type:\s*['"]ROUTE_COMMAND['"]/);
+  assert.match(decision.parameters.jsCode, /idempotency_key/);
+  assert.match(decision.parameters.jsCode, /worker-unavailable/);
+  assert.ok(failureReply);
+  assert.match(failureReply.parameters.jsCode, /worker_failure_text/);
+  assert.ok(resultCheck);
+  assert.match(resultCheck.parameters.conditions.conditions[0].leftValue, /ok\s*===\s*true/);
+  assert.deepEqual(router.connections['Append OPERATION reservation'].main[0].map((target) => target.node), ['Prepare Worker Envelope']);
+  assert.deepEqual(router.connections['Execute Configured Worker'].main[0].map((target) => target.node), ['Worker succeeded?']);
+  assert.deepEqual(router.connections['Worker succeeded?'].main[0].map((target) => target.node), ['Project OPERATION committed']);
+  assert.deepEqual(router.connections['Worker succeeded?'].main[1].map((target) => target.node), ['Project OPERATION failed']);
+  assert.deepEqual(router.connections['Execute Configured Worker'].main[1].map((target) => target.node), ['Project OPERATION failed']);
+
+  for (const name of ['Update OPERATION committed', 'Update OPERATION failed']) {
+    const update = router.nodes.find((node) => node.name === name);
+    assert.ok(update);
+    assert.equal(update.parameters.operation, 'update');
+    assert.deepEqual(update.parameters.columns.matchingColumns, ['idempotency_key']);
+    assert.ok(update.parameters.columns.schema.length > 0);
+  }
+});

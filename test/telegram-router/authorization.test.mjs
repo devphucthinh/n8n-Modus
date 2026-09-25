@@ -29,7 +29,7 @@ test('denies a business command whose catalog row has no permission', () => {
     description_vi: 'Lệnh nghiệp vụ thiếu quyền',
     permission_code: '',
     topic_type: 'KIEM_KE',
-    worker_workflow: 'WF05_V2_MO_PHIEN_KIEM_KE',
+    worker_workflow: 'WF05RouterTest001',
     example: '/publicinvalid',
     ordinal: '60',
     trang_thai: 'ACTIVE',

@@ -8,10 +8,30 @@ test('routes each configured command by topic and returns the standard envelope'
   const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables: validConfigWithRouterTables(), now: FIXED_NOW });
   assert.equal(result.decision.kind, 'ROUTE');
   assert.equal(result.decision.route.topic_type, 'KIEM_KE');
-  assert.equal(result.decision.route.worker_workflow, 'WF05_V2_MO_PHIEN_KIEM_KE');
+  assert.equal(result.decision.route.worker_workflow, 'WF05RouterTest001');
   assert.equal(result.decision.reservation.row.idempotency_key, 'tg-9001');
   assert.equal(result.decision.reservation.row.status, 'PREPARED');
   assert.equal(result.envelope.operation_id, 'tg-9001');
+  assert.equal(result.decision.worker_envelope.operation_id, result.envelope.operation_id);
+  assert.equal(result.decision.worker_envelope.request_id, result.envelope.request_id);
+  assert.equal(result.decision.worker_envelope.payload.idempotency_key, result.envelope.payload.idempotency_key);
+  assert.equal(result.decision.worker_envelope.branch_id, 'CN_HN');
+  assert.equal(result.decision.worker_envelope.config_version, 'v1');
+  assert.equal(result.decision.worker_envelope.event_type, 'ROUTE_COMMAND');
+});
+
+test('does not reserve or acknowledge a command without a configured worker workflow ID', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_LENH.find((row) => row.command_text === '/kiemke').worker_workflow = '';
+
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+  const help = runRouterFlow({ update: telegramStatusUpdate({ text: '/help' }), tables, now: FIXED_NOW });
+
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.reservation, undefined);
+  assert.doesNotMatch(result.reply.text, /Đã tiếp nhận lệnh/);
+  assert.match(result.reply.text, /worker-unavailable/i);
+  assert.doesNotMatch(help.reply.text, /\/kiemke/);
 });
 
 test('does not expose gateway ledger writes as a router audit plan for status', () => {
@@ -44,6 +64,32 @@ test('uses the configured acknowledgement and rejects a repeated committed opera
   const repeated = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
   assert.equal(repeated.decision.kind, 'DUPLICATE');
   assert.equal(repeated.decision.write_plan.length, 0);
+});
+
+test('does not dispatch a repeated operation while its reservation is still prepared', () => {
+  const tables = validConfigWithRouterTables();
+  const first = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+  tables.OPERATION.push(first.decision.reservation.row);
+
+  const repeated = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+
+  assert.equal(repeated.decision.kind, 'DUPLICATE');
+  assert.equal(repeated.decision.reservation, undefined);
+  assert.deepEqual(repeated.decision.write_plan, []);
+});
+
+test('does not replay a worker after an operation was marked failed', () => {
+  const tables = validConfigWithRouterTables();
+  tables.OPERATION.push({
+    operation_id: 'tg-9001', request_id: 'tg-9001', operation_type: 'ROUTE_COMMAND', idempotency_key: 'tg-9001',
+    expected_row_count: '1', actual_row_count: '', checksum: '', error_id: 'err-tg-9001-worker-failed',
+    created_at: FIXED_NOW, updated_at: FIXED_NOW, status: 'FAILED',
+  });
+
+  const repeated = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+
+  assert.equal(repeated.decision.kind, 'DUPLICATE');
+  assert.equal(repeated.decision.reservation, undefined);
 });
 
 test('returns a safe error instead of an empty reply when a router message is missing', () => {
@@ -82,16 +128,21 @@ test('does not append a duplicate access-denied event for a repeated update', ()
   assert.deepEqual(repeated.decision.write_plan, []);
 });
 
-test('does not let a non-ADMIN role retry an error through the router', () => {
+test('allows branch-scoped retry permission but fails closed when source payload is absent', () => {
   const tables = validConfigWithRouterTables();
-  tables.CONFIG_USER.push({ user_id: '10003', display_name: 'Kiểm kê có quyền nhầm', branch_id: 'CN_HN', trang_thai: 'ACTIVE' });
-  tables.CONFIG_USER_ROLE.push({ user_role_id: 'ur-10003', user_id: '10003', role_code: 'KIEM_KE', branch_id: '*', effective_from: '2026-09-19T01:00:00.000Z', effective_to: '', trang_thai: 'ACTIVE' });
-  tables.CONFIG_ROLE_PERMISSION.push({ role_permission_id: 'rp-invalid-admin', role_code: 'KIEM_KE', permission_code: 'ADMIN_RETRY', trang_thai: 'ACTIVE' });
+  tables.CONFIG_USER_ROLE.find((row) => row.user_id === 'admin-1').branch_id = 'CN_HN';
+  tables.OPERATION.push({
+    operation_id: 'op-original-42', request_id: 'tg-original-42', operation_type: 'ROUTE_COMMAND', idempotency_key: 'idem-original-42',
+    expected_row_count: '1', actual_row_count: '', checksum: '', status: 'FAILED', error_id: 'err-42', created_at: FIXED_NOW, updated_at: FIXED_NOW,
+  });
 
-  const result = runRouterFlow({ update: telegramStatusUpdate({ userId: '10003', text: '/retry err-42' }), tables, now: FIXED_NOW });
+  const result = runRouterFlow({ update: telegramStatusUpdate({ userId: 'admin-1', text: '/retry err-42' }), tables, now: FIXED_NOW });
 
-  assert.equal(result.decision.kind, 'DENY');
-  assert.equal(result.decision.write_plan[0].row.error_code, 'USER_NOT_AUTHORIZED');
+  assert.equal(result.decision.kind, 'RETRY_UNAVAILABLE');
+  assert.equal(result.decision.retry.operation_id, 'op-original-42');
+  assert.equal(result.decision.retry.idempotency_key, 'idem-original-42');
+  assert.match(result.reply.text, /retry-payload-unavailable/i);
+  assert.doesNotMatch(result.reply.text, /Đã tiếp nhận yêu cầu retry/);
 });
 
 test('denies retry for an expired configured global role assignment', () => {
@@ -117,6 +168,12 @@ test('help works when only its requested router catalog is available', () => {
   assert.equal(result.decision.kind, 'HELP');
   assert.match(result.reply.text, /\/kiemke/);
   assert.doesNotMatch(result.reply.text, /\/nhaphang/);
+});
+
+test('help labels permissionless commands explicitly', () => {
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/help' }), tables: validConfigWithRouterTables(), now: FIXED_NOW });
+
+  assert.match(result.reply.text, /\/help[\s\S]*Quyền: Không yêu cầu/);
 });
 
 test('help omits commands whose topic branch is outside the actor assignment', () => {
