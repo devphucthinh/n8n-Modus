@@ -1,6 +1,8 @@
 import { authorizeCommand } from './authorize-command.mjs';
 import { planRetry } from './retry-command.mjs';
 
+export const SAFE_ERROR_TEMPLATE = 'Không thể hoàn tất thao tác. Mã lỗi: {error_id}. Vui lòng gửi mã này cho quản trị viên.';
+
 const routerText = (value) => (value == null ? '' : String(value).trim());
 const routerActive = (row) => routerText(row?.trang_thai).toUpperCase() === 'ACTIVE';
 
@@ -21,7 +23,7 @@ function routerErrorText(gatewayResult, context, errorCode, errorId) {
   const key = errorCode === 'COMMAND_NOT_AVAILABLE' ? 'COMMAND_NOT_AVAILABLE' : errorCode === 'USER_NOT_ACTIVE' ? 'USER_NOT_ACTIVE' : 'ERROR_GENERIC';
   const response = gatewayResult?.response ?? {};
   const safeErrorId = routerText(errorId || response.error_id) || 'unknown';
-  return routerRender(map.get(key) || map.get('ERROR_GENERIC') || 'ERROR error_id={error_id}', { error_id: safeErrorId }).slice(0, 4096);
+  return routerRender(map.get(key) || map.get('ERROR_GENERIC') || SAFE_ERROR_TEMPLATE, { error_id: safeErrorId }).slice(0, 4096);
 }
 
 function routerStatusText(gatewayResult, context) {
@@ -109,6 +111,16 @@ function routerAuthorized({ actorUserId, command, topic, config, context, now, a
   return authorizeCommand({ actorUserId, command, topic, tables: { ...config, ...context }, now }).allowed;
 }
 
+function routerErrorAlertTarget(context) {
+  const rows = (context?.CONFIG_GLOBAL ?? []).filter((row) => routerActive(row) && routerText(row.value_type).toUpperCase() === 'STRING');
+  const values = new Map(rows.map((row) => [routerText(row.config_key), routerText(row.config_value)]));
+  const chatId = values.get('ERROR_ALERT_CHAT_ID') ?? '';
+  const threadId = values.get('ERROR_ALERT_THREAD_ID') ?? '';
+  if (!/^-?\d{1,20}$/.test(chatId) || /^-?0+$/.test(chatId)) return undefined;
+  if (!/^\d{1,16}$/.test(threadId) || /^0+$/.test(threadId)) return undefined;
+  return { chat_id: chatId, message_thread_id: threadId };
+}
+
 export function decideRouterResponse({ normalized, gatewayResult, now = new Date().toISOString() } = {}) {
   const response = gatewayResult?.response ?? {};
   const config = response.data?.config_tables ?? {};
@@ -159,6 +171,7 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
     event_type: 'ROUTE_COMMAND',
     branch_id: routerText(topic?.branch_id),
     config_version: routerText(response.config_version) || normalized.envelope.config_version || null,
+    config_snapshot_id: routerText(response.config_snapshot_id) || null,
     payload: {
       ...normalized.envelope.payload,
       command,
@@ -168,14 +181,12 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
       idempotency_key: idempotencyKey,
     },
   };
-  const workerFailureId = `err-${routerText(normalized?.envelope?.operation_id)}-worker-failed`;
   return {
     decision: {
       kind: 'ROUTE',
+      error_alert_target: routerErrorAlertTarget(context),
       worker_envelope: workerEnvelope,
-      worker_failure_error_id: workerFailureId,
-      worker_failure_text: routerErrorText(gatewayResult, context, 'ERROR_GENERIC', workerFailureId),
-      worker_error_message_template: routerMessages(gatewayResult, context).get('ERROR_GENERIC') || 'ERROR error_id={error_id}',
+      worker_error_message_template: routerMessages(gatewayResult, context).get('ERROR_GENERIC') || SAFE_ERROR_TEMPLATE,
       route: {
         command_code: routerText(commandRow.command_code),
         topic_type: routerText(commandRow.topic_type),

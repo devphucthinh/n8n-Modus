@@ -313,15 +313,22 @@ function activeVersionRow(tables) {
   return (tableRows(tables, 'CONFIG_VERSION') ?? []).find((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE') ?? null;
 }
 
-function versionNumber(version) {
-  const match = /(?:^|\D)(\d+(?:\.\d+)?)$/.exec(asText(version));
-  return match ? Number(match[1]) : null;
+function versionParts(version) {
+  const match = /^v?(\d+(?:\.\d+)*)$/i.exec(asText(version));
+  return match ? match[1].split('.').map(Number) : null;
 }
 
 function isVersionGreater(current, previous) {
-  const currentNumber = versionNumber(current);
-  const previousNumber = versionNumber(previous);
-  if (currentNumber !== null && previousNumber !== null) return currentNumber > previousNumber;
+  const currentParts = versionParts(current);
+  const previousParts = versionParts(previous);
+  if (currentParts && previousParts) {
+    for (let index = 0; index < Math.max(currentParts.length, previousParts.length); index += 1) {
+      const currentPart = currentParts[index] ?? 0;
+      const previousPart = previousParts[index] ?? 0;
+      if (currentPart !== previousPart) return currentPart > previousPart;
+    }
+    return false;
+  }
   return asText(current) > asText(previous);
 }
 
@@ -389,9 +396,16 @@ const CONTEXT_COLUMNS = Object.freeze({
   EVENT_LOG: ['event_id', 'event_type', 'request_id', 'operation_id', 'command', 'outcome', 'error_code', 'trang_thai'],
 });
 
-function contextConfigTables(tables, requested, includeAudit = false) {
+function contextConfigTables(tables, requested, includeAudit = false, includeErrorAlertConfig = false) {
   const entries = requested.length ? Object.entries(CONTEXT_COLUMNS) : includeAudit ? [['EVENT_LOG', CONTEXT_COLUMNS.EVENT_LOG]] : [];
-  return Object.fromEntries(entries.map(([sheetName, columns]) => [sheetName, (tableRows(tables, sheetName) ?? []).map((row) => Object.fromEntries(columns.map((column) => [column, row[column] ?? ''])))]));
+  const context = Object.fromEntries(entries.map(([sheetName, columns]) => [sheetName, (tableRows(tables, sheetName) ?? []).map((row) => Object.fromEntries(columns.map((column) => [column, row[column] ?? ''])))]));
+  if (includeErrorAlertConfig) {
+    const alertKeys = new Set(['ERROR_ALERT_CHAT_ID', 'ERROR_ALERT_THREAD_ID']);
+    context.CONFIG_GLOBAL = (tableRows(tables, 'CONFIG_GLOBAL') ?? [])
+      .filter((row) => asText(row.trang_thai).toUpperCase() === ACTIVE && alertKeys.has(asText(row.config_key)))
+      .map((row) => Object.fromEntries(['config_key', 'config_value', 'value_type', 'trang_thai'].map((column) => [column, row[column] ?? ''])));
+  }
+  return context;
 }
 
 function statusResponse({ envelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables = {}, contextTables = {} }) {
@@ -464,6 +478,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const predecessor = committedPredecessor(tables);
   const operationType = asText(envelope.payload?.intent || envelope.operation_type || (asText(envelope.payload?.command).toLowerCase().startsWith('/trangthai') ? 'READ_STATUS' : 'START_OPERATION')).toUpperCase();
   const routeNeedsSnapshot = ['ROUTE_COMMAND', 'MANUAL_RETRY'].includes(operationType);
+  const routerContextTables = () => contextConfigTables(tables, requested, false, operationType === 'ROUTE_COMMAND');
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
 
   if (maintenanceMode === 'YES' && !['READ_STATUS', 'READ_HELP', 'COMMAND_NOT_AVAILABLE'].includes(operationType)) {
@@ -472,32 +487,44 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const activeBranches = (tableRows(tables, 'CONFIG_BRANCH') ?? [])
     .filter((row) => asText(row.trang_thai).toUpperCase() === ACTIVE)
     .map((row) => ({ branch_id: asText(row.branch_id), branch_name: asText(row.branch_name) }));
+  let sameVersion = false;
+  let sameFingerprint = false;
+  let versionErrorCode = null;
+  if (predecessor) {
+    sameVersion = configVersion === asText(predecessor.config_version);
+    sameFingerprint = snapshotContentMatches(predecessor, normalizedConfigJson);
+    if (sameVersion && !sameFingerprint) versionErrorCode = 'CONFIG_VERSION_NOT_INCREMENTED';
+    else if (!sameVersion && sameFingerprint) versionErrorCode = 'CONFIG_VERSION_EMPTY_CHANGE';
+    else if (!sameVersion && !isVersionGreater(configVersion, predecessor.config_version)) versionErrorCode = 'CONFIG_VERSION_NOT_INCREMENTED';
+  }
+  if (versionErrorCode && !['READ_STATUS', 'COMMAND_NOT_AVAILABLE'].includes(operationType)) {
+    const message = versionErrorCode === 'CONFIG_VERSION_EMPTY_CHANGE'
+      ? 'config_version changed without configuration content changing'
+      : 'Configuration content changed without a greater config_version';
+    return decorateFailure(makeFailure(versionErrorCode, message, normalizedEnvelope));
+  }
   if (operationType === 'COMMAND_NOT_AVAILABLE') {
     return {
       ok: true,
-      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: routerContextTables() }),
       write_plan: [],
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
     };
   }
   if (READ_ONLY_OPERATION_TYPES.has(operationType) && !routeNeedsSnapshot) {
+    const snapshotMatchesCurrentConfig = Boolean(predecessor && sameVersion && sameFingerprint);
     return {
       ok: true,
-      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+      response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: snapshotMatchesCurrentConfig ? predecessor.config_snapshot_id : null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
       write_plan: [],
-      diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
+      diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: snapshotMatchesCurrentConfig, read_only: true },
     };
   }
   if (predecessor) {
-    const sameVersion = configVersion === asText(predecessor.config_version);
-    const sameFingerprint = snapshotContentMatches(predecessor, normalizedConfigJson);
-    if (sameVersion && !sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'Configuration content changed without incrementing config_version', normalizedEnvelope));
-    if (!sameVersion && sameFingerprint) return decorateFailure(makeFailure('CONFIG_VERSION_EMPTY_CHANGE', 'config_version changed without configuration content changing', normalizedEnvelope));
-    if (!sameVersion && !isVersionGreater(configVersion, predecessor.config_version)) return decorateFailure(makeFailure('CONFIG_VERSION_NOT_INCREMENTED', 'config_version must increase', normalizedEnvelope));
     if (sameVersion && sameFingerprint) {
       return {
         ok: true,
-        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+        response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor.config_snapshot_id, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: routerContextTables() }),
         write_plan: [],
         diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: true },
       };
@@ -572,7 +599,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   };
   return {
     ok: true,
-    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
+    response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: routerContextTables() }),
     write_plan: [
       { sheet: 'OPERATION', action: existingOperation ? 'UPSERT' : 'APPEND', row: operationRow },
       { sheet: 'CONFIG_SNAPSHOT', action: snapshotRows.some((row) => asText(row.config_snapshot_id) === snapshotId) ? 'UPSERT' : 'APPEND', row: snapshotRow },

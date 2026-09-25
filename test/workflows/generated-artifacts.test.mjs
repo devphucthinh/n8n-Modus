@@ -304,7 +304,7 @@ test('WF03 dispatches the reserved standard envelope to the configured workflow 
   assert.deepEqual(router.connections['Execute Configured Worker'].main[1].map((target) => target.node), ['Prepare Worker Error Input']);
   assert.deepEqual(router.connections['Prepare Worker Error Input'].main[0].map((target) => target.node), ['Call WF02 Error Handler']);
   assert.deepEqual(router.connections['Call WF02 Error Handler'].main[0].map((target) => target.node), ['Project OPERATION failed']);
-  assert.deepEqual(router.connections['Call WF02 Error Handler'].main[1].map((target) => target.node), ['Project OPERATION failed']);
+  assert.deepEqual(router.connections['Call WF02 Error Handler'].main[1].map((target) => target.node), ['Prepare Fallback ERROR_BIA row']);
 
   for (const name of ['Update OPERATION committed', 'Update OPERATION failed']) {
     const update = router.nodes.find((node) => node.name === name);
@@ -313,4 +313,157 @@ test('WF03 dispatches the reserved standard envelope to the configured workflow 
     assert.deepEqual(update.parameters.columns.matchingColumns, ['idempotency_key']);
     assert.ok(update.parameters.columns.schema.length > 0);
   }
+});
+
+test('WF03 does not invent a persisted error ID when WF02 fails', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  const failureProjector = router.nodes.find((node) => node.name === 'Project OPERATION failed');
+  const failureReply = router.nodes.find((node) => node.name === 'Project Worker Failure Reply');
+  const decision = {
+    reservation: { row: { idempotency_key: 'idem-1', operation_id: 'op-1' } },
+    worker_failure_error_id: 'err-op-1-worker-failed',
+    worker_error_message_template: 'Không thể hoàn tất thao tác. Mã lỗi: {error_id}',
+    worker_envelope: { operation_id: 'op-1', request_id: 'req-1', config_version: 'v1', config_snapshot_id: 'cfg-v1-abc' },
+  };
+  const nodeValues = {
+    'Router Decision': { decision, reply_target: { chat_id: 'chat', message_thread_id: '77' } },
+    'Call WF02 Error Handler': {},
+    'Prepare Worker Error Input': { error: { error_code: 'WORKER_FAILED', message: 'raw-secret-token-must-not-persist' } },
+  };
+  const $ = (name) => ({ first: () => ({ json: nodeValues[name] }) });
+  const failedOperation = new Function('$', failureProjector.parameters.jsCode)($);
+  const reply = new Function('$', '$json', failureReply.parameters.jsCode)(
+    $,
+    { reply_target: nodeValues['Router Decision'].reply_target, text: 'accepted' },
+  );
+
+  assert.equal(failedOperation[0].json.error_id, '');
+  assert.doesNotMatch(reply[0].json.text, /err-op-1-worker-failed/);
+  assert.match(reply[0].json.text, /Mã lỗi: —/);
+
+  const fallbackProjector = router.nodes.find((node) => node.name === 'Prepare Fallback ERROR_BIA row');
+  const fallbackAppend = router.nodes.find((node) => node.name === 'Append fallback ERROR_BIA');
+  assert.ok(fallbackProjector);
+  assert.ok(fallbackAppend);
+  assert.equal(fallbackAppend.parameters.operation, 'appendOrUpdate');
+  assert.deepEqual(fallbackAppend.parameters.columns.matchingColumns, ['error_id']);
+  assert.equal(fallbackAppend.onError, 'continueErrorOutput');
+  assert.deepEqual(router.connections['Call WF02 Error Handler'].main[1].map((target) => target.node), ['Prepare Fallback ERROR_BIA row']);
+  assert.deepEqual(router.connections['Prepare Fallback ERROR_BIA row'].main[0].map((target) => target.node), ['Append fallback ERROR_BIA']);
+  assert.deepEqual(router.connections['Append fallback ERROR_BIA'].main[0].map((target) => target.node), ['Mark fallback ERROR_BIA persisted']);
+  assert.deepEqual(router.connections['Append fallback ERROR_BIA'].main[1].map((target) => target.node), ['Project OPERATION failed']);
+
+  const fallbackRows = new Function('$', fallbackProjector.parameters.jsCode)($);
+  assert.equal(fallbackRows[0].json.error_id, 'err-op-1-error-handler-unavailable');
+  assert.equal(fallbackRows[0].json.error_code, 'ERROR_HANDLER_UNAVAILABLE');
+  assert.equal(fallbackRows[0].json.retryable, 'NO');
+  assert.equal(fallbackRows[0].json.config_version, 'v1');
+  assert.equal(fallbackRows[0].json.operation_id, 'op-1');
+  assert.equal(fallbackRows[0].json.node, 'Call WF02 Error Handler (WORKER_FAILED)');
+  assert.doesNotMatch(JSON.stringify(fallbackRows[0].json), /raw-secret-token-must-not-persist/);
+  assert.match(fallbackRows[0].json.message_safe, /err-op-1-error-handler-unavailable/);
+  const persistedMarker = router.nodes.find((node) => node.name === 'Mark fallback ERROR_BIA persisted');
+  assert.ok(persistedMarker);
+  assert.deepEqual(router.connections['Append fallback ERROR_BIA'].main[0].map((target) => target.node), ['Mark fallback ERROR_BIA persisted']);
+  assert.deepEqual(router.connections['Append fallback ERROR_BIA'].main[1].map((target) => target.node), ['Project OPERATION failed']);
+  assert.deepEqual(router.connections['Mark fallback ERROR_BIA persisted'].main[0].map((target) => target.node), ['Project OPERATION failed']);
+});
+
+test('WF03 sends only a sanitized persisted fallback diagnostic to a configured admin topic', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  const failureProjector = router.nodes.find((node) => node.name === 'Project Worker Failure Reply');
+  const alertCheck = router.nodes.find((node) => node.name === 'Error Alert Configured?');
+  const persistedMarker = router.nodes.find((node) => node.name === 'Mark fallback ERROR_BIA persisted');
+  const prepareAlert = router.nodes.find((node) => node.name === 'Prepare Admin Error Alert');
+  const sendAlert = router.nodes.find((node) => node.name === 'Send Admin Error Alert');
+  const restoreReply = router.nodes.find((node) => node.name === 'Restore Worker Failure Reply');
+  const decision = {
+    error_alert_target: { chat_id: '-1000000000001', message_thread_id: '909' },
+    reservation: { row: { operation_id: 'op-1', idempotency_key: 'idem-1', request_id: 'req-1' } },
+    worker_error_message_template: 'Không thể hoàn tất. Mã lỗi: {error_id}',
+    worker_envelope: { operation_id: 'op-1', request_id: 'req-1', config_version: 'v1.3' },
+  };
+  const fallbackRow = {
+    error_id: 'err-op-1-error-handler-unavailable',
+    error_code: 'ERROR_HANDLER_UNAVAILABLE',
+    node: 'Call WF02 Error Handler (WORKER_FAILED)',
+    operation_id: 'op-1',
+    config_version: 'v1.3',
+    message_safe: 'Không thể hoàn tất. Mã lỗi: err-op-1-error-handler-unavailable',
+  };
+  const nodeValues = {
+    'Router Decision': { decision, reply_target: { chat_id: '-100100', message_thread_id: '77' } },
+    'Call WF02 Error Handler': { error: { message: 'raw secret token must never be sent' } },
+    'Append fallback ERROR_BIA': fallbackRow,
+    'Mark fallback ERROR_BIA persisted': { ...fallbackRow, fallback_persisted: true },
+  };
+  const $ = (name) => ({ first: () => ({ json: nodeValues[name] }) });
+
+  assert.ok(failureProjector);
+  assert.ok(alertCheck);
+  assert.ok(persistedMarker);
+  assert.ok(prepareAlert);
+  assert.ok(sendAlert);
+  assert.ok(restoreReply);
+  const projected = new Function('$', failureProjector.parameters.jsCode)($)[0].json;
+  assert.equal(projected.alert_target.chat_id, '-1000000000001');
+  assert.equal(projected.alert_text, [
+    'WF03 error fallback',
+    'error_id=err-op-1-error-handler-unavailable',
+    'operation_id=op-1',
+    'config_version=v1.3',
+    'node=Call WF02 Error Handler (WORKER_FAILED)',
+    'error_code=ERROR_HANDLER_UNAVAILABLE',
+  ].join('\n'));
+  assert.doesNotMatch(projected.alert_text, /raw secret token/);
+
+  const prepared = new Function('$json', prepareAlert.parameters.jsCode)(projected)[0].json;
+  assert.deepEqual(prepared, { chat_id: '-1000000000001', message_thread_id: '909', text: projected.alert_text });
+  assert.equal(sendAlert.parameters.chatId, '={{$json.chat_id}}');
+  assert.equal(sendAlert.parameters.additionalFields.message_thread_id, '={{$json.message_thread_id}}');
+  assert.equal(sendAlert.parameters.text, '={{$json.text}}');
+  assert.equal(sendAlert.onError, 'continueErrorOutput');
+  assert.deepEqual(router.connections['Project Worker Failure Reply'].main[0].map((target) => target.node), ['Error Alert Configured?']);
+  assert.deepEqual(router.connections['Error Alert Configured?'].main[0].map((target) => target.node), ['Prepare Admin Error Alert']);
+  assert.deepEqual(router.connections['Error Alert Configured?'].main[1].map((target) => target.node), ['Restore Worker Failure Reply']);
+  assert.deepEqual(router.connections['Send Admin Error Alert'].main[0].map((target) => target.node), ['Restore Worker Failure Reply']);
+  assert.deepEqual(router.connections['Send Admin Error Alert'].main[1].map((target) => target.node), ['Restore Worker Failure Reply']);
+  assert.deepEqual(router.connections['Restore Worker Failure Reply'].main[0].map((target) => target.node), ['Split Router Reply']);
+});
+
+test('WF03 skips the admin alert unless the fallback error was persisted', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  const failureProjector = router.nodes.find((node) => node.name === 'Project Worker Failure Reply');
+  const decision = {
+    error_alert_target: { chat_id: '-1000000000001', message_thread_id: '909' },
+    reservation: { row: { operation_id: 'op-1', idempotency_key: 'idem-1' } },
+    worker_envelope: { operation_id: 'op-1', config_version: 'v1.3' },
+  };
+  const $ = (name) => ({ first: () => ({ json: name === 'Router Decision' ? { decision, reply_target: { chat_id: '-100100', message_thread_id: '77' } } : {} }) });
+
+  const projected = new Function('$', failureProjector.parameters.jsCode)($)[0].json;
+
+  assert.equal(projected.alert_target, null);
+  assert.equal(projected.alert_text, '');
+});
+
+test('WF03 failure reply has safe localized guidance when configured templates are unavailable', async () => {
+  const workflows = await loadGeneratedWorkflows();
+  const router = workflows.find((workflow) => workflow.name === 'WF03_V2_TELEGRAM_ROUTER');
+  const failureReply = router.nodes.find((node) => node.name === 'Project Worker Failure Reply');
+  const nodeValues = {
+    'Router Decision': { decision: {}, reply_target: { chat_id: 'fixture-chat', message_thread_id: 'fixture-thread' } },
+    'Call WF02 Error Handler': {},
+    'Mark fallback ERROR_BIA persisted': {},
+  };
+  const $ = (name) => ({ first: () => ({ json: nodeValues[name] }) });
+
+  const reply = new Function('$', failureReply.parameters.jsCode)($)[0].json;
+
+  assert.match(reply.text, /Không thể hoàn tất thao tác/);
+  assert.match(reply.text, /Mã lỗi: —/);
+  assert.match(reply.text, /quản trị viên/);
 });

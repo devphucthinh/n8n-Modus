@@ -267,6 +267,37 @@ test('rejects routed commands when config content changed without a version bump
   assert.deepEqual(result.write_plan, []);
 });
 
+test('rejects /help when config content changed without a version bump', () => {
+  const baseline = evaluateConfigGateway({ envelope: writeEnvelope, tables: validConfig(), now: FIXED_NOW });
+  const tables = withCommittedSnapshot('v1', baseline.response.fingerprint);
+  tables.CONFIG_BRANCH[0].branch_name = 'Tên chưa được version hóa';
+
+  const result = evaluateConfigGateway({
+    envelope: { ...writeEnvelope, payload: { command: '/help', intent: 'READ_HELP', required_sheet_names: [] } },
+    tables,
+    now: FIXED_NOW,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_NOT_INCREMENTED');
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('compares multi-digit config version components numerically', () => {
+  const baselineTables = validConfig();
+  baselineTables.CONFIG_VERSION[0].config_version = 'v1.9';
+  const baseline = evaluateConfigGateway({ envelope: writeEnvelope, tables: baselineTables, now: FIXED_NOW });
+  const tables = withCommittedSnapshot('v1.9', baseline.response.fingerprint);
+  tables.CONFIG_VERSION[0].config_version = 'v1.10';
+  tables.CONFIG_BRANCH[0].branch_name = 'Chi nhánh đã nâng version';
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response.config_version, 'v1.10');
+  assert.equal(result.write_plan.length, 4);
+});
+
 test('stores a versioned config snapshot before routing when the config version advanced', () => {
   const baseline = evaluateConfigGateway({ envelope: writeEnvelope, tables: validConfig(), now: FIXED_NOW });
   const tables = withCommittedSnapshot('v1', baseline.response.fingerprint);

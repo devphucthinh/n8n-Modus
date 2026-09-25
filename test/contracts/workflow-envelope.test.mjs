@@ -17,6 +17,20 @@ test('normalizes a status request without inventing business configuration', () 
   assert.equal(result.branch_id, null);
 });
 
+test('preserves the immutable config snapshot ID in the shared envelope', () => {
+  const result = normalizeEnvelope({
+    request_id: 'req-002',
+    operation_id: 'op-002',
+    event_type: 'ROUTE_COMMAND',
+    config_version: 'v1.2',
+    config_snapshot_id: 'cfg-v1.2-a1b2c3d4',
+    payload: { command: '/kiemke' },
+  });
+
+  assert.equal(result.config_version, 'v1.2');
+  assert.equal(result.config_snapshot_id, 'cfg-v1.2-a1b2c3d4');
+});
+
 test('rejects a request without immutable IDs', () => {
   assert.throws(
     () => normalizeEnvelope({ event_type: 'TELEGRAM_UPDATE', payload: {} }),

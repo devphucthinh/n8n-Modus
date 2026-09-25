@@ -17,7 +17,43 @@ test('routes each configured command by topic and returns the standard envelope'
   assert.equal(result.decision.worker_envelope.payload.idempotency_key, result.envelope.payload.idempotency_key);
   assert.equal(result.decision.worker_envelope.branch_id, 'CN_HN');
   assert.equal(result.decision.worker_envelope.config_version, 'v1');
+  assert.equal(result.decision.worker_envelope.config_snapshot_id, result.gateway.response.config_snapshot_id);
   assert.equal(result.decision.worker_envelope.event_type, 'ROUTE_COMMAND');
+});
+
+test('routes only a complete numeric admin alert destination outside the worker envelope', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_GLOBAL.push(
+    { config_key: 'ERROR_ALERT_CHAT_ID', config_value: '-1000000000001', value_type: 'STRING', description_vi: 'Admin chat', trang_thai: 'ACTIVE' },
+    { config_key: 'ERROR_ALERT_THREAD_ID', config_value: '909', value_type: 'STRING', description_vi: 'Admin topic', trang_thai: 'ACTIVE' },
+  );
+
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+
+  assert.deepEqual(result.decision.error_alert_target, { chat_id: '-1000000000001', message_thread_id: '909' });
+  assert.equal('error_alert_target' in result.decision.worker_envelope, false);
+  assert.deepEqual(result.gateway.response.data.context_tables.CONFIG_GLOBAL.map((row) => row.config_key), ['ERROR_ALERT_CHAT_ID', 'ERROR_ALERT_THREAD_ID']);
+});
+
+test('does not configure an admin alert destination when either ID is missing or invalid', () => {
+  const cases = [
+    [{ config_key: 'ERROR_ALERT_CHAT_ID', config_value: '-1000000000001', value_type: 'STRING', trang_thai: 'ACTIVE' }],
+    [
+      { config_key: 'ERROR_ALERT_CHAT_ID', config_value: 'REPLACE_WITH_ADMIN_CHAT_ID', value_type: 'STRING', trang_thai: 'ACTIVE' },
+      { config_key: 'ERROR_ALERT_THREAD_ID', config_value: '909', value_type: 'STRING', trang_thai: 'ACTIVE' },
+    ],
+    [
+      { config_key: 'ERROR_ALERT_CHAT_ID', config_value: '-1000000000001', value_type: 'STRING', trang_thai: 'ACTIVE' },
+      { config_key: 'ERROR_ALERT_THREAD_ID', config_value: '0', value_type: 'STRING', trang_thai: 'ACTIVE' },
+    ],
+  ];
+
+  for (const alertRows of cases) {
+    const tables = validConfigWithRouterTables();
+    tables.CONFIG_GLOBAL.push(...alertRows);
+    const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+    assert.equal(result.decision.error_alert_target, undefined);
+  }
 });
 
 test('does not reserve or acknowledge a command without a configured worker workflow ID', () => {
@@ -124,6 +160,19 @@ test('returns a safe error instead of an empty reply when a router message is bl
   const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
   assert.equal(result.decision.kind, 'DENY');
   assert.match(result.reply.text, /error_id|CONFIG_MESSAGE_MISSING|err-/i);
+});
+
+test('uses localized administrator guidance when no configured error template is available', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_THONG_BAO = [];
+
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+
+  assert.equal(result.gateway.ok, false);
+  assert.match(result.reply.text, /Không thể hoàn tất thao tác/);
+  assert.match(result.reply.text, /Mã lỗi: err-/);
+  assert.match(result.reply.text, /quản trị viên/);
+  assert.doesNotMatch(result.reply.text, /^ERROR\b/);
 });
 
 test('records an opaque access-denied event for an active user without permission', () => {

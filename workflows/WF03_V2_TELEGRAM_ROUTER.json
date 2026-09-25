@@ -112,7 +112,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\n\nfunction isWithinEffectiveWindow(row, now) {\n  const current = Date.parse(now);\n  const from = asText(row?.effective_from);\n  const to = asText(row?.effective_to);\n  if (from && Number.isNaN(Date.parse(from))) return false;\n  if (to && Number.isNaN(Date.parse(to))) return false;\n  if ((from || to) && Number.isNaN(current)) return false;\n  return (!from || current >= Date.parse(from)) && (!to || current <= Date.parse(to));\n}\n\n\nconst authorizationText = (value) => (value == null ? '' : String(value).trim());\nconst active = (row) => authorizationText(row?.trang_thai).toUpperCase() === 'ACTIVE';\n\nconst denied = () => ({ allowed: false, denial_code: 'USER_NOT_AUTHORIZED', permission_code: null, branch_id: null, role_codes: [] });\n\nfunction eligibleAssignments({ actorUserId, permissionCode, tables, now, topic = null }) {\n  const userId = authorizationText(actorUserId);\n  const topicBranch = authorizationText(topic?.branch_id);\n  const permissions = new Set((tables?.CONFIG_PERMISSION ?? []).filter(active).map((row) => authorizationText(row.permission_code)));\n  if (!permissions.has(authorizationText(permissionCode))) return [];\n  const roles = new Set((tables?.CONFIG_ROLE ?? []).filter(active).map((row) => authorizationText(row.role_code)));\n  const mappings = (tables?.CONFIG_ROLE_PERMISSION ?? []).filter((row) => active(row) && authorizationText(row.permission_code) === authorizationText(permissionCode));\n  return (tables?.CONFIG_USER_ROLE ?? [])\n    .filter((row) => active(row) && authorizationText(row.user_id) === userId && isWithinEffectiveWindow(row, now))\n    .filter((row) => (authorizationText(row.branch_id) === '*' || !topic || authorizationText(row.branch_id) === topicBranch) && roles.has(authorizationText(row.role_code)))\n    .filter((row) => mappings.some((mapping) => authorizationText(mapping.role_code) === authorizationText(row.role_code)));\n}\n\nfunction authorizeCommand({ actorUserId, command, topic = null, tables, now = new Date().toISOString() } = {}) {\n  const userId = authorizationText(actorUserId);\n  const user = (tables?.CONFIG_USER ?? []).find((row) => authorizationText(row.user_id) === userId);\n  if (!user || !active(user)) return denied();\n  const commandText = authorizationText(command).toLowerCase();\n  if (commandText === '/trangthai') {\n    return { allowed: true, denial_code: null, permission_code: null, branch_id: authorizationText(user.branch_id) || null, role_codes: [] };\n  }\n  const commandRow = (tables?.CONFIG_LENH ?? []).find((row) => active(row) && authorizationText(row.command_text).toLowerCase() === commandText);\n  if (!commandRow) return denied();\n  const permissionCode = authorizationText(commandRow.permission_code);\n  if (!permissionCode) {\n    if (!['/help', '/trangthai'].includes(commandText)) return denied();\n    return { allowed: true, denial_code: null, permission_code: null, branch_id: authorizationText(topic?.branch_id) || authorizationText(user.branch_id) || null, role_codes: [] };\n  }\n  if (!topic || !active(topic)) return denied();\n  const topicBranch = authorizationText(topic.branch_id);\n  const eligible = eligibleAssignments({ actorUserId: userId, permissionCode, tables, now, topic });\n  if (eligible.length === 0) return denied();\n  return {\n    allowed: true,\n    denial_code: null,\n    permission_code: permissionCode,\n    branch_id: topicBranch,\n    role_codes: [...new Set(eligible.map((row) => authorizationText(row.role_code)))],\n  };\n}\n\nfunction hasPermission({ actorUserId, permissionCode, tables, now, topic = null } = {}) {\n  const userId = authorizationText(actorUserId);\n  const user = (tables?.CONFIG_USER ?? []).find((row) => authorizationText(row.user_id) === userId);\n  if (!user || !active(user)) return false;\n  return eligibleAssignments({ actorUserId: userId, permissionCode, tables, now, topic }).length > 0;\n}\n\n\nconst retryText = (value) => (value == null ? '' : String(value).trim());\nconst failure = (errorCode, errorId) => ({ ok: false, response: { status: 'ERROR', error_code: errorCode, error_id: errorId }, write_plan: [] });\n\nfunction planRetry({ actorUserId, errorId, permissionCode, topic, tables, now = new Date().toISOString() } = {}) {\n  const id = retryText(errorId);\n  const command = (tables?.CONFIG_LENH ?? []).find((candidate) => retryText(candidate.trang_thai).toUpperCase() === 'ACTIVE'\n    && retryText(candidate.command_text).toLowerCase() === '/retry');\n  const configuredPermission = retryText(command?.permission_code);\n  const authorization = authorizeCommand({ actorUserId, command: '/retry', topic, tables, now });\n  if (!configuredPermission || (retryText(permissionCode) && retryText(permissionCode) !== configuredPermission) || !authorization.allowed) {\n    return failure('USER_NOT_AUTHORIZED', `err-${id || 'unknown'}-retry-denied`);\n  }\n  const row = (tables?.ERROR_BIA ?? []).find((candidate) => retryText(candidate.error_id) === id && retryText(candidate.status).toUpperCase() !== 'RESOLVED');\n  if (!row) return failure('ERROR_NOT_FOUND', `err-${id || 'unknown'}-not-found`);\n  if (!['YES', 'TRUE', '1'].includes(retryText(row.retryable).toUpperCase())) return failure('ERROR_NOT_RETRYABLE', id);\n  const operationId = retryText(row.operation_id);\n  const operation = (tables?.OPERATION ?? []).find((candidate) => retryText(candidate.operation_id) === operationId);\n  const idempotencyKey = retryText(operation?.idempotency_key) || retryText(row.request_id) || operationId;\n  return {\n    ...failure('RETRY_PAYLOAD_UNAVAILABLE', `err-${id || 'unknown'}-retry-payload-unavailable`),\n    retry: { error_id: id, operation_id: operationId, idempotency_key: idempotencyKey },\n  };\n}\n\n\nconst routerText = (value) => (value == null ? '' : String(value).trim());\nconst routerActive = (row) => routerText(row?.trang_thai).toUpperCase() === 'ACTIVE';\n\nfunction routerMessages(gatewayResult, context) {\n  const map = new Map(Object.entries(gatewayResult?.response?.messages ?? {}));\n  for (const row of context?.CONFIG_THONG_BAO ?? []) {\n    if (routerActive(row)) map.set(routerText(row.message_key), routerText(row.message_text));\n  }\n  return map;\n}\n\nfunction routerRender(template, values) {\n  return routerText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => routerText(values[key]));\n}\n\nfunction routerErrorText(gatewayResult, context, errorCode, errorId) {\n  const map = routerMessages(gatewayResult, context);\n  const key = errorCode === 'COMMAND_NOT_AVAILABLE' ? 'COMMAND_NOT_AVAILABLE' : errorCode === 'USER_NOT_ACTIVE' ? 'USER_NOT_ACTIVE' : 'ERROR_GENERIC';\n  const response = gatewayResult?.response ?? {};\n  const safeErrorId = routerText(errorId || response.error_id) || 'unknown';\n  return routerRender(map.get(key) || map.get('ERROR_GENERIC') || 'ERROR error_id={error_id}', { error_id: safeErrorId }).slice(0, 4096);\n}\n\nfunction routerStatusText(gatewayResult, context) {\n  const response = gatewayResult?.response ?? {};\n  const messages = routerMessages(gatewayResult, context);\n  const lines = [\n    routerRender(messages.get('STATUS_HEADER'), response),\n    routerRender(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),\n    routerRender(messages.get('STATUS_CONFIG_LINE'), response),\n    routerRender(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n    ...(response.active_branches ?? []).map((branch) => routerRender(messages.get('STATUS_BRANCH_LINE'), branch)),\n    routerRender(messages.get('STATUS_MAINTENANCE_LINE'), response),\n  ];\n  return lines.filter(Boolean).join('\\n').slice(0, 4096);\n}\n\nfunction routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds) {\n  if (routerText(row.topic_type) && !routerText(row.worker_workflow)) return false;\n  const permission = routerText(row.permission_code);\n  const command = routerText(row.command_text) || routerText(row.command_code);\n  const tables = { ...config, ...context };\n  if (!permission) return authorizeCommand({ actorUserId, command, tables, now }).allowed;\n  const topicType = routerText(row.topic_type);\n  const topics = (config.CONFIG_TOPIC ?? []).filter((candidate) => routerActive(candidate)\n    && activeBranchIds.has(routerText(candidate.branch_id))\n    && (!topicType || routerText(candidate.topic_type) === topicType));\n  return topics.some((topic) => authorizeCommand({ actorUserId, command, topic, tables, now }).allowed);\n}\n\nfunction routerFindTopic(normalized, config, activeBranchIds, commandRow) {\n  const topicType = routerText(commandRow?.topic_type);\n  const matches = (config.CONFIG_TOPIC ?? []).filter((row) => routerActive(row)\n    && routerText(row.chat_id) === routerText(normalized?.reply_target?.chat_id)\n    && routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id));\n  if (matches.length !== 1) return null;\n  if (!activeBranchIds.has(routerText(matches[0].branch_id))) return null;\n  return !topicType || routerText(matches[0].topic_type) === topicType ? matches[0] : null;\n}\n\nfunction routerHelpText(config, context, actorUserId, now, activeBranchIds) {\n  const rows = (config.CONFIG_LENH ?? []).filter(routerActive)\n    .filter((row) => routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds))\n    .sort((left, right) => Number(routerText(left.ordinal) || 0) - Number(routerText(right.ordinal) || 0));\n  const messages = routerMessages({ response: { messages: {} } }, context);\n  const lines = [];\n  if (messages.get('HELP_HEADER')) lines.push(routerText(messages.get('HELP_HEADER')));\n  for (const row of rows) {\n    const command = routerText(row.command_text) || routerText(row.command_code);\n    const syntax = routerText(row.syntax) || command;\n    lines.push(`${command} — ${routerText(row.description_vi)}`);\n    lines.push(`  Cú pháp: ${syntax}`);\n    lines.push(`  Quyền: ${routerText(row.permission_code) || 'Không yêu cầu'}`);\n    lines.push(`  Ví dụ: ${routerText(row.example) || syntax}`);\n  }\n  return lines.join('\\n');\n}\n\nfunction routerAuditPlan(normalized, context, errorCode, topic, now) {\n  if (!Array.isArray(context?.EVENT_LOG)) return [];\n  const eventKey = routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.operation_id);\n  const eventId = `evt-${eventKey}-${routerText(errorCode).toLowerCase()}`;\n  if (context.EVENT_LOG.some((row) => routerText(row.event_id) === eventId)) return [];\n  return [{\n    sheet: 'EVENT_LOG',\n    action: 'APPEND',\n    row: {\n      event_id: eventId,\n      event_type: 'TELEGRAM_ACCESS',\n      request_id: routerText(normalized?.envelope?.request_id),\n      operation_id: routerText(normalized?.envelope?.operation_id),\n      actor_user_id: routerText(normalized?.envelope?.actor_user_id),\n      branch_id: routerText(topic?.branch_id),\n      topic_type: routerText(topic?.topic_type),\n      command: routerText(normalized?.command),\n      outcome: 'DENIED',\n      error_code: routerText(errorCode),\n      created_at: now,\n      trang_thai: 'COMMITTED',\n    },\n  }];\n}\n\nfunction routerAuthorized({ actorUserId, command, topic, config, context, now, activeBranchIds }) {\n  if (command !== '/trangthai' && (!topic || !routerActive(topic) || !activeBranchIds.has(routerText(topic.branch_id)))) return false;\n  return authorizeCommand({ actorUserId, command, topic, tables: { ...config, ...context }, now }).allowed;\n}\n\nfunction decideRouterResponse({ normalized, gatewayResult, now = new Date().toISOString() } = {}) {\n  const response = gatewayResult?.response ?? {};\n  const config = response.data?.config_tables ?? {};\n  const context = response.data?.context_tables ?? {};\n  const activeBranchIds = new Set((response.active_branches ?? []).map((branch) => routerText(branch.branch_id)).filter(Boolean));\n  const callbackToken = routerText(normalized?.callback?.data);\n  const callbackCommand = callbackToken && !routerText(normalized?.command)\n    ? (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && [row.command_code, row.command_text].map((value) => routerText(value).toLowerCase()).includes(callbackToken.toLowerCase()))?.command_text\n    : null;\n  const command = routerText(callbackCommand || normalized?.command).toLowerCase();\n  const base = { kind: 'DENY', write_plan: [] };\n  if (!gatewayResult?.ok) return { decision: { kind: 'DENY', write_plan: response.error_code === 'USER_NOT_ACTIVE' ? routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', null, now) : [] }, text: routerErrorText(gatewayResult, context, response.error_code, response.error_id) };\n  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: [] }, text: routerStatusText(gatewayResult, context) };\n  const operationKeys = [normalized?.envelope?.operation_id, normalized?.envelope?.request_id, normalized?.envelope?.payload?.idempotency_key].map(routerText).filter(Boolean);\n  if ((context.OPERATION ?? []).some((row) => ['COMMITTED', 'PREPARED', 'FAILED'].includes(routerText(row.status).toUpperCase()) && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).some((value) => operationKeys.includes(value)))) {\n    const messages = routerMessages(gatewayResult, context);\n    return { decision: { kind: 'DUPLICATE', write_plan: [] }, text: routerText(messages.get('ROUTER_DUPLICATE')) };\n  }\n  if (command === '/help') return { decision: { kind: 'HELP', write_plan: [] }, text: routerHelpText(config, context, normalized?.envelope?.actor_user_id, now, activeBranchIds) };\n  if (command === '/retry') {\n    const errorId = routerText(normalized?.args?.[0]);\n    const retryCommand = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === '/retry');\n    const topic = routerFindTopic(normalized, config, activeBranchIds, retryCommand);\n    const retryResult = planRetry({ actorUserId: normalized?.envelope?.actor_user_id, errorId, topic, tables: { ...config, ...context }, now });\n    const errorCode = retryResult.response?.error_code ?? 'ERROR_GENERIC';\n    if (errorCode === 'USER_NOT_AUTHORIZED' || !retryCommand || !routerActive(topic)) {\n      return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', retryResult.response?.error_id || `err-${errorId || 'unknown'}-retry-denied`) };\n    }\n    if (!retryResult.retry) return { decision: base, text: routerErrorText(gatewayResult, context, errorCode, retryResult.response?.error_id || errorId) };\n    return {\n      decision: { kind: 'RETRY_UNAVAILABLE', retry: retryResult.retry, write_plan: [] },\n      text: routerErrorText(gatewayResult, context, errorCode, retryResult.response?.error_id || `err-${errorId}-retry-payload-unavailable`),\n    };\n  }\n  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === command);\n  if (!commandRow) return { decision: base, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}`) };\n  const topic = routerFindTopic(normalized, config, activeBranchIds, commandRow);\n  if (!routerAuthorized({ actorUserId: normalized?.envelope?.actor_user_id, command, topic, config, context, now, activeBranchIds })) {\n    return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${routerText(normalized?.envelope?.operation_id)}-user_not_authorized`) };\n  }\n  if (!routerText(commandRow.worker_workflow)) {\n    return { decision: { kind: 'DENY', write_plan: [] }, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}-worker-unavailable`) };\n  }\n  const messages = routerMessages(gatewayResult, context);\n  const idempotencyKey = routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id);\n  const workerEnvelope = {\n    ...normalized.envelope,\n    event_type: 'ROUTE_COMMAND',\n    branch_id: routerText(topic?.branch_id),\n    config_version: routerText(response.config_version) || normalized.envelope.config_version || null,\n    payload: {\n      ...normalized.envelope.payload,\n      command,\n      command_code: routerText(commandRow.command_code),\n      intent: 'ROUTE_COMMAND',\n      topic_type: routerText(commandRow.topic_type),\n      idempotency_key: idempotencyKey,\n    },\n  };\n  const workerFailureId = `err-${routerText(normalized?.envelope?.operation_id)}-worker-failed`;\n  return {\n    decision: {\n      kind: 'ROUTE',\n      worker_envelope: workerEnvelope,\n      worker_failure_error_id: workerFailureId,\n      worker_failure_text: routerErrorText(gatewayResult, context, 'ERROR_GENERIC', workerFailureId),\n      worker_error_message_template: routerMessages(gatewayResult, context).get('ERROR_GENERIC') || 'ERROR error_id={error_id}',\n      route: {\n        command_code: routerText(commandRow.command_code),\n        topic_type: routerText(commandRow.topic_type),\n        worker_workflow: routerText(commandRow.worker_workflow),\n        branch_id: routerText(topic?.branch_id),\n        permission_code: routerText(commandRow.permission_code) || null,\n        operation_id: routerText(normalized?.envelope?.operation_id),\n        idempotency_key: idempotencyKey,\n      },\n      reservation: {\n        sheet: 'OPERATION',\n        action: 'APPEND',\n        row: {\n          operation_id: routerText(normalized?.envelope?.operation_id),\n          request_id: routerText(normalized?.envelope?.request_id),\n          operation_type: 'ROUTE_COMMAND',\n          idempotency_key: routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id),\n          expected_row_count: '1',\n          actual_row_count: '',\n          checksum: '',\n          status: 'PREPARED',\n          error_id: '',\n          created_at: now,\n          updated_at: now,\n        },\n      },\n      write_plan: [],\n    },\n    text: routerText(messages.get('ROUTER_COMMAND_ACCEPTED')),\n  };\n}\n\n\nconst normalized = $('Normalize Telegram Update').first()?.json ?? {};\nconst gatewayResult = $input.first()?.json ?? {};\nconst result = decideRouterResponse({ normalized, gatewayResult, now: new Date().toISOString() });\nreturn [{ json: { envelope: normalized.envelope, reply_target: normalized.reply_target, decision: result.decision, text: result.text } }];"
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\n\nfunction isWithinEffectiveWindow(row, now) {\n  const current = Date.parse(now);\n  const from = asText(row?.effective_from);\n  const to = asText(row?.effective_to);\n  if (from && Number.isNaN(Date.parse(from))) return false;\n  if (to && Number.isNaN(Date.parse(to))) return false;\n  if ((from || to) && Number.isNaN(current)) return false;\n  return (!from || current >= Date.parse(from)) && (!to || current <= Date.parse(to));\n}\n\n\nconst authorizationText = (value) => (value == null ? '' : String(value).trim());\nconst active = (row) => authorizationText(row?.trang_thai).toUpperCase() === 'ACTIVE';\n\nconst denied = () => ({ allowed: false, denial_code: 'USER_NOT_AUTHORIZED', permission_code: null, branch_id: null, role_codes: [] });\n\nfunction eligibleAssignments({ actorUserId, permissionCode, tables, now, topic = null }) {\n  const userId = authorizationText(actorUserId);\n  const topicBranch = authorizationText(topic?.branch_id);\n  const permissions = new Set((tables?.CONFIG_PERMISSION ?? []).filter(active).map((row) => authorizationText(row.permission_code)));\n  if (!permissions.has(authorizationText(permissionCode))) return [];\n  const roles = new Set((tables?.CONFIG_ROLE ?? []).filter(active).map((row) => authorizationText(row.role_code)));\n  const mappings = (tables?.CONFIG_ROLE_PERMISSION ?? []).filter((row) => active(row) && authorizationText(row.permission_code) === authorizationText(permissionCode));\n  return (tables?.CONFIG_USER_ROLE ?? [])\n    .filter((row) => active(row) && authorizationText(row.user_id) === userId && isWithinEffectiveWindow(row, now))\n    .filter((row) => (authorizationText(row.branch_id) === '*' || !topic || authorizationText(row.branch_id) === topicBranch) && roles.has(authorizationText(row.role_code)))\n    .filter((row) => mappings.some((mapping) => authorizationText(mapping.role_code) === authorizationText(row.role_code)));\n}\n\nfunction authorizeCommand({ actorUserId, command, topic = null, tables, now = new Date().toISOString() } = {}) {\n  const userId = authorizationText(actorUserId);\n  const user = (tables?.CONFIG_USER ?? []).find((row) => authorizationText(row.user_id) === userId);\n  if (!user || !active(user)) return denied();\n  const commandText = authorizationText(command).toLowerCase();\n  if (commandText === '/trangthai') {\n    return { allowed: true, denial_code: null, permission_code: null, branch_id: authorizationText(user.branch_id) || null, role_codes: [] };\n  }\n  const commandRow = (tables?.CONFIG_LENH ?? []).find((row) => active(row) && authorizationText(row.command_text).toLowerCase() === commandText);\n  if (!commandRow) return denied();\n  const permissionCode = authorizationText(commandRow.permission_code);\n  if (!permissionCode) {\n    if (!['/help', '/trangthai'].includes(commandText)) return denied();\n    return { allowed: true, denial_code: null, permission_code: null, branch_id: authorizationText(topic?.branch_id) || authorizationText(user.branch_id) || null, role_codes: [] };\n  }\n  if (!topic || !active(topic)) return denied();\n  const topicBranch = authorizationText(topic.branch_id);\n  const eligible = eligibleAssignments({ actorUserId: userId, permissionCode, tables, now, topic });\n  if (eligible.length === 0) return denied();\n  return {\n    allowed: true,\n    denial_code: null,\n    permission_code: permissionCode,\n    branch_id: topicBranch,\n    role_codes: [...new Set(eligible.map((row) => authorizationText(row.role_code)))],\n  };\n}\n\nfunction hasPermission({ actorUserId, permissionCode, tables, now, topic = null } = {}) {\n  const userId = authorizationText(actorUserId);\n  const user = (tables?.CONFIG_USER ?? []).find((row) => authorizationText(row.user_id) === userId);\n  if (!user || !active(user)) return false;\n  return eligibleAssignments({ actorUserId: userId, permissionCode, tables, now, topic }).length > 0;\n}\n\n\nconst retryText = (value) => (value == null ? '' : String(value).trim());\nconst failure = (errorCode, errorId) => ({ ok: false, response: { status: 'ERROR', error_code: errorCode, error_id: errorId }, write_plan: [] });\n\nfunction planRetry({ actorUserId, errorId, permissionCode, topic, tables, now = new Date().toISOString() } = {}) {\n  const id = retryText(errorId);\n  const command = (tables?.CONFIG_LENH ?? []).find((candidate) => retryText(candidate.trang_thai).toUpperCase() === 'ACTIVE'\n    && retryText(candidate.command_text).toLowerCase() === '/retry');\n  const configuredPermission = retryText(command?.permission_code);\n  const authorization = authorizeCommand({ actorUserId, command: '/retry', topic, tables, now });\n  if (!configuredPermission || (retryText(permissionCode) && retryText(permissionCode) !== configuredPermission) || !authorization.allowed) {\n    return failure('USER_NOT_AUTHORIZED', `err-${id || 'unknown'}-retry-denied`);\n  }\n  const row = (tables?.ERROR_BIA ?? []).find((candidate) => retryText(candidate.error_id) === id && retryText(candidate.status).toUpperCase() !== 'RESOLVED');\n  if (!row) return failure('ERROR_NOT_FOUND', `err-${id || 'unknown'}-not-found`);\n  if (!['YES', 'TRUE', '1'].includes(retryText(row.retryable).toUpperCase())) return failure('ERROR_NOT_RETRYABLE', id);\n  const operationId = retryText(row.operation_id);\n  const operation = (tables?.OPERATION ?? []).find((candidate) => retryText(candidate.operation_id) === operationId);\n  const idempotencyKey = retryText(operation?.idempotency_key) || retryText(row.request_id) || operationId;\n  return {\n    ...failure('RETRY_PAYLOAD_UNAVAILABLE', `err-${id || 'unknown'}-retry-payload-unavailable`),\n    retry: { error_id: id, operation_id: operationId, idempotency_key: idempotencyKey },\n  };\n}\n\n\nconst SAFE_ERROR_TEMPLATE = 'Không thể hoàn tất thao tác. Mã lỗi: {error_id}. Vui lòng gửi mã này cho quản trị viên.';\n\nconst routerText = (value) => (value == null ? '' : String(value).trim());\nconst routerActive = (row) => routerText(row?.trang_thai).toUpperCase() === 'ACTIVE';\n\nfunction routerMessages(gatewayResult, context) {\n  const map = new Map(Object.entries(gatewayResult?.response?.messages ?? {}));\n  for (const row of context?.CONFIG_THONG_BAO ?? []) {\n    if (routerActive(row)) map.set(routerText(row.message_key), routerText(row.message_text));\n  }\n  return map;\n}\n\nfunction routerRender(template, values) {\n  return routerText(template).replace(/\\{([a-z0-9_]+)\\}/gi, (_match, key) => routerText(values[key]));\n}\n\nfunction routerErrorText(gatewayResult, context, errorCode, errorId) {\n  const map = routerMessages(gatewayResult, context);\n  const key = errorCode === 'COMMAND_NOT_AVAILABLE' ? 'COMMAND_NOT_AVAILABLE' : errorCode === 'USER_NOT_ACTIVE' ? 'USER_NOT_ACTIVE' : 'ERROR_GENERIC';\n  const response = gatewayResult?.response ?? {};\n  const safeErrorId = routerText(errorId || response.error_id) || 'unknown';\n  return routerRender(map.get(key) || map.get('ERROR_GENERIC') || SAFE_ERROR_TEMPLATE, { error_id: safeErrorId }).slice(0, 4096);\n}\n\nfunction routerStatusText(gatewayResult, context) {\n  const response = gatewayResult?.response ?? {};\n  const messages = routerMessages(gatewayResult, context);\n  const lines = [\n    routerRender(messages.get('STATUS_HEADER'), response),\n    routerRender(messages.get('STATUS_GATEWAY_HEALTH_LINE'), response),\n    routerRender(messages.get('STATUS_CONFIG_LINE'), response),\n    routerRender(messages.get('STATUS_BRANCH_COUNT_LINE'), response),\n    ...(response.active_branches ?? []).map((branch) => routerRender(messages.get('STATUS_BRANCH_LINE'), branch)),\n    routerRender(messages.get('STATUS_MAINTENANCE_LINE'), response),\n  ];\n  return lines.filter(Boolean).join('\\n').slice(0, 4096);\n}\n\nfunction routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds) {\n  if (routerText(row.topic_type) && !routerText(row.worker_workflow)) return false;\n  const permission = routerText(row.permission_code);\n  const command = routerText(row.command_text) || routerText(row.command_code);\n  const tables = { ...config, ...context };\n  if (!permission) return authorizeCommand({ actorUserId, command, tables, now }).allowed;\n  const topicType = routerText(row.topic_type);\n  const topics = (config.CONFIG_TOPIC ?? []).filter((candidate) => routerActive(candidate)\n    && activeBranchIds.has(routerText(candidate.branch_id))\n    && (!topicType || routerText(candidate.topic_type) === topicType));\n  return topics.some((topic) => authorizeCommand({ actorUserId, command, topic, tables, now }).allowed);\n}\n\nfunction routerFindTopic(normalized, config, activeBranchIds, commandRow) {\n  const topicType = routerText(commandRow?.topic_type);\n  const matches = (config.CONFIG_TOPIC ?? []).filter((row) => routerActive(row)\n    && routerText(row.chat_id) === routerText(normalized?.reply_target?.chat_id)\n    && routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id));\n  if (matches.length !== 1) return null;\n  if (!activeBranchIds.has(routerText(matches[0].branch_id))) return null;\n  return !topicType || routerText(matches[0].topic_type) === topicType ? matches[0] : null;\n}\n\nfunction routerHelpText(config, context, actorUserId, now, activeBranchIds) {\n  const rows = (config.CONFIG_LENH ?? []).filter(routerActive)\n    .filter((row) => routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds))\n    .sort((left, right) => Number(routerText(left.ordinal) || 0) - Number(routerText(right.ordinal) || 0));\n  const messages = routerMessages({ response: { messages: {} } }, context);\n  const lines = [];\n  if (messages.get('HELP_HEADER')) lines.push(routerText(messages.get('HELP_HEADER')));\n  for (const row of rows) {\n    const command = routerText(row.command_text) || routerText(row.command_code);\n    const syntax = routerText(row.syntax) || command;\n    lines.push(`${command} — ${routerText(row.description_vi)}`);\n    lines.push(`  Cú pháp: ${syntax}`);\n    lines.push(`  Quyền: ${routerText(row.permission_code) || 'Không yêu cầu'}`);\n    lines.push(`  Ví dụ: ${routerText(row.example) || syntax}`);\n  }\n  return lines.join('\\n');\n}\n\nfunction routerAuditPlan(normalized, context, errorCode, topic, now) {\n  if (!Array.isArray(context?.EVENT_LOG)) return [];\n  const eventKey = routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.operation_id);\n  const eventId = `evt-${eventKey}-${routerText(errorCode).toLowerCase()}`;\n  if (context.EVENT_LOG.some((row) => routerText(row.event_id) === eventId)) return [];\n  return [{\n    sheet: 'EVENT_LOG',\n    action: 'APPEND',\n    row: {\n      event_id: eventId,\n      event_type: 'TELEGRAM_ACCESS',\n      request_id: routerText(normalized?.envelope?.request_id),\n      operation_id: routerText(normalized?.envelope?.operation_id),\n      actor_user_id: routerText(normalized?.envelope?.actor_user_id),\n      branch_id: routerText(topic?.branch_id),\n      topic_type: routerText(topic?.topic_type),\n      command: routerText(normalized?.command),\n      outcome: 'DENIED',\n      error_code: routerText(errorCode),\n      created_at: now,\n      trang_thai: 'COMMITTED',\n    },\n  }];\n}\n\nfunction routerAuthorized({ actorUserId, command, topic, config, context, now, activeBranchIds }) {\n  if (command !== '/trangthai' && (!topic || !routerActive(topic) || !activeBranchIds.has(routerText(topic.branch_id)))) return false;\n  return authorizeCommand({ actorUserId, command, topic, tables: { ...config, ...context }, now }).allowed;\n}\n\nfunction routerErrorAlertTarget(context) {\n  const rows = (context?.CONFIG_GLOBAL ?? []).filter((row) => routerActive(row) && routerText(row.value_type).toUpperCase() === 'STRING');\n  const values = new Map(rows.map((row) => [routerText(row.config_key), routerText(row.config_value)]));\n  const chatId = values.get('ERROR_ALERT_CHAT_ID') ?? '';\n  const threadId = values.get('ERROR_ALERT_THREAD_ID') ?? '';\n  if (!/^-?\\d{1,20}$/.test(chatId) || /^-?0+$/.test(chatId)) return undefined;\n  if (!/^\\d{1,16}$/.test(threadId) || /^0+$/.test(threadId)) return undefined;\n  return { chat_id: chatId, message_thread_id: threadId };\n}\n\nfunction decideRouterResponse({ normalized, gatewayResult, now = new Date().toISOString() } = {}) {\n  const response = gatewayResult?.response ?? {};\n  const config = response.data?.config_tables ?? {};\n  const context = response.data?.context_tables ?? {};\n  const activeBranchIds = new Set((response.active_branches ?? []).map((branch) => routerText(branch.branch_id)).filter(Boolean));\n  const callbackToken = routerText(normalized?.callback?.data);\n  const callbackCommand = callbackToken && !routerText(normalized?.command)\n    ? (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && [row.command_code, row.command_text].map((value) => routerText(value).toLowerCase()).includes(callbackToken.toLowerCase()))?.command_text\n    : null;\n  const command = routerText(callbackCommand || normalized?.command).toLowerCase();\n  const base = { kind: 'DENY', write_plan: [] };\n  if (!gatewayResult?.ok) return { decision: { kind: 'DENY', write_plan: response.error_code === 'USER_NOT_ACTIVE' ? routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', null, now) : [] }, text: routerErrorText(gatewayResult, context, response.error_code, response.error_id) };\n  if (command === '/trangthai') return { decision: { kind: 'STATUS', write_plan: [] }, text: routerStatusText(gatewayResult, context) };\n  const operationKeys = [normalized?.envelope?.operation_id, normalized?.envelope?.request_id, normalized?.envelope?.payload?.idempotency_key].map(routerText).filter(Boolean);\n  if ((context.OPERATION ?? []).some((row) => ['COMMITTED', 'PREPARED', 'FAILED'].includes(routerText(row.status).toUpperCase()) && [row.operation_id, row.request_id, row.idempotency_key].map(routerText).some((value) => operationKeys.includes(value)))) {\n    const messages = routerMessages(gatewayResult, context);\n    return { decision: { kind: 'DUPLICATE', write_plan: [] }, text: routerText(messages.get('ROUTER_DUPLICATE')) };\n  }\n  if (command === '/help') return { decision: { kind: 'HELP', write_plan: [] }, text: routerHelpText(config, context, normalized?.envelope?.actor_user_id, now, activeBranchIds) };\n  if (command === '/retry') {\n    const errorId = routerText(normalized?.args?.[0]);\n    const retryCommand = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === '/retry');\n    const topic = routerFindTopic(normalized, config, activeBranchIds, retryCommand);\n    const retryResult = planRetry({ actorUserId: normalized?.envelope?.actor_user_id, errorId, topic, tables: { ...config, ...context }, now });\n    const errorCode = retryResult.response?.error_code ?? 'ERROR_GENERIC';\n    if (errorCode === 'USER_NOT_AUTHORIZED' || !retryCommand || !routerActive(topic)) {\n      return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', retryResult.response?.error_id || `err-${errorId || 'unknown'}-retry-denied`) };\n    }\n    if (!retryResult.retry) return { decision: base, text: routerErrorText(gatewayResult, context, errorCode, retryResult.response?.error_id || errorId) };\n    return {\n      decision: { kind: 'RETRY_UNAVAILABLE', retry: retryResult.retry, write_plan: [] },\n      text: routerErrorText(gatewayResult, context, errorCode, retryResult.response?.error_id || `err-${errorId}-retry-payload-unavailable`),\n    };\n  }\n  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === command);\n  if (!commandRow) return { decision: base, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}`) };\n  const topic = routerFindTopic(normalized, config, activeBranchIds, commandRow);\n  if (!routerAuthorized({ actorUserId: normalized?.envelope?.actor_user_id, command, topic, config, context, now, activeBranchIds })) {\n    return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${routerText(normalized?.envelope?.operation_id)}-user_not_authorized`) };\n  }\n  if (!routerText(commandRow.worker_workflow)) {\n    return { decision: { kind: 'DENY', write_plan: [] }, text: routerErrorText(gatewayResult, context, 'COMMAND_NOT_AVAILABLE', `err-${routerText(normalized?.envelope?.operation_id)}-worker-unavailable`) };\n  }\n  const messages = routerMessages(gatewayResult, context);\n  const idempotencyKey = routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id);\n  const workerEnvelope = {\n    ...normalized.envelope,\n    event_type: 'ROUTE_COMMAND',\n    branch_id: routerText(topic?.branch_id),\n    config_version: routerText(response.config_version) || normalized.envelope.config_version || null,\n    config_snapshot_id: routerText(response.config_snapshot_id) || null,\n    payload: {\n      ...normalized.envelope.payload,\n      command,\n      command_code: routerText(commandRow.command_code),\n      intent: 'ROUTE_COMMAND',\n      topic_type: routerText(commandRow.topic_type),\n      idempotency_key: idempotencyKey,\n    },\n  };\n  return {\n    decision: {\n      kind: 'ROUTE',\n      error_alert_target: routerErrorAlertTarget(context),\n      worker_envelope: workerEnvelope,\n      worker_error_message_template: routerMessages(gatewayResult, context).get('ERROR_GENERIC') || SAFE_ERROR_TEMPLATE,\n      route: {\n        command_code: routerText(commandRow.command_code),\n        topic_type: routerText(commandRow.topic_type),\n        worker_workflow: routerText(commandRow.worker_workflow),\n        branch_id: routerText(topic?.branch_id),\n        permission_code: routerText(commandRow.permission_code) || null,\n        operation_id: routerText(normalized?.envelope?.operation_id),\n        idempotency_key: idempotencyKey,\n      },\n      reservation: {\n        sheet: 'OPERATION',\n        action: 'APPEND',\n        row: {\n          operation_id: routerText(normalized?.envelope?.operation_id),\n          request_id: routerText(normalized?.envelope?.request_id),\n          operation_type: 'ROUTE_COMMAND',\n          idempotency_key: routerText(normalized?.envelope?.payload?.idempotency_key) || routerText(normalized?.envelope?.request_id),\n          expected_row_count: '1',\n          actual_row_count: '',\n          checksum: '',\n          status: 'PREPARED',\n          error_id: '',\n          created_at: now,\n          updated_at: now,\n        },\n      },\n      write_plan: [],\n    },\n    text: routerText(messages.get('ROUTER_COMMAND_ACCEPTED')),\n  };\n}\n\n\nconst normalized = $('Normalize Telegram Update').first()?.json ?? {};\nconst gatewayResult = $input.first()?.json ?? {};\nconst result = decideRouterResponse({ normalized, gatewayResult, now: new Date().toISOString() });\nreturn [{ json: { envelope: normalized.envelope, reply_target: normalized.reply_target, decision: result.decision, text: result.text } }];"
       },
       "id": "kkb-v2-router-decision",
       "name": "Router Decision",
@@ -385,7 +385,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const current = $input.first()?.json ?? {}; const decision = $('Router Decision').first()?.json?.decision ?? {}; const row = decision.reservation?.row ?? {}; const envelope = decision.worker_envelope ?? {}; const workerError = current.error ?? (current.response && { error_code: current.response.error_code, message: current.response.message ?? current.response.error, retryable: current.response.retryable }) ?? { error_code: current.error_code ?? 'WORKER_FAILED', message: current.message ?? 'Configured worker did not return ok=true', retryable: current.retryable ?? false }; return [{ json: { error: workerError, context: { request_id: envelope.request_id ?? row.request_id, operation_id: row.operation_id, workflow: 'WF03_V2_TELEGRAM_ROUTER', node: 'Execute Configured Worker', config_version: envelope.config_version }, messages: { ERROR_GENERIC: decision.worker_error_message_template ?? 'ERROR error_id={error_id}' } } }];"
+        "jsCode": "const current = $input.first()?.json ?? {}; const decision = $('Router Decision').first()?.json?.decision ?? {}; const row = decision.reservation?.row ?? {}; const envelope = decision.worker_envelope ?? {}; const workerError = current.error ?? (current.response && { error_code: current.response.error_code, message: current.response.message ?? current.response.error, retryable: current.response.retryable }) ?? { error_code: current.error_code ?? 'WORKER_FAILED', message: current.message ?? 'Configured worker did not return ok=true', retryable: current.retryable ?? false }; return [{ json: { error: workerError, context: { request_id: envelope.request_id ?? row.request_id, operation_id: row.operation_id, workflow: 'WF03_V2_TELEGRAM_ROUTER', node: 'Execute Configured Worker', config_version: envelope.config_version }, messages: { ERROR_GENERIC: decision.worker_error_message_template ?? \"Không thể hoàn tất thao tác. Mã lỗi: {error_id}. Vui lòng gửi mã này cho quản trị viên.\" } } }];"
       },
       "id": "kkb-v2-prepare-worker-error-input",
       "name": "Prepare Worker Error Input",
@@ -421,14 +421,80 @@
     },
     {
       "parameters": {
-        "jsCode": "const decision = $('Router Decision').first()?.json?.decision ?? {}; const row = decision.reservation?.row; if (!row) return []; const errorResult = $('Call WF02 Error Handler').first()?.json ?? {}; const errorId = String(errorResult.response?.error_id ?? decision.worker_failure_error_id ?? '').trim() || `err-${String(row.operation_id ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '_')}-worker-failed`; return [{ json: { idempotency_key: row.idempotency_key, status: 'FAILED', error_id: errorId, updated_at: new Date().toISOString() } }];"
+        "jsCode": "const readNode = (name) => { try { return $(name).first()?.json ?? {}; } catch { return {}; } }; const decision = readNode('Router Decision').decision ?? {}; const row = decision.reservation?.row ?? {}; const envelope = decision.worker_envelope ?? {}; if (!row.operation_id) return []; const operationId = String(row.operation_id).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'unknown'; const errorId = `err-${operationId}-error-handler-unavailable`; const sourceError = readNode('Prepare Worker Error Input').error ?? {}; const causeCode = String(sourceError.error_code ?? sourceError.code ?? 'WORKER_FAILED').toUpperCase().replace(/[^A-Z0-9_]/g, '_').replace(/_+/g, '_').slice(0, 48) || 'WORKER_FAILED'; const template = String(decision.worker_error_message_template ?? \"Không thể hoàn tất thao tác. Mã lỗi: {error_id}. Vui lòng gửi mã này cho quản trị viên.\"); return [{ json: { error_id: errorId, error_code: 'ERROR_HANDLER_UNAVAILABLE', error_class: 'INTERNAL', retryable: 'NO', message_safe: template.replaceAll('{error_id}', errorId).slice(0, 256), workflow: 'WF03_V2_TELEGRAM_ROUTER', node: `Call WF02 Error Handler (${causeCode})`, operation_id: row.operation_id, request_id: envelope.request_id ?? row.request_id, config_version: envelope.config_version ?? '', fingerprint: '', status: 'OPEN', created_at: new Date().toISOString(), resolved_at: '' } }];"
+      },
+      "id": "kkb-v2-prepare-fallback-error-bia-row",
+      "name": "Prepare Fallback ERROR_BIA row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        -240
+      ],
+      "notes": "If WF02 cannot run, record a safe non-retryable fallback in the existing ERROR_BIA schema. Only a filtered error code is retained in the existing node field; raw error text is never copied."
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "ERROR_BIA",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "error_id"
+          ]
+        }
+      },
+      "id": "kkb-v2-append-fallback-error-bia",
+      "name": "Append fallback ERROR_BIA",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3220,
+        -240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...($json ?? {}), fallback_persisted: true } }];"
+      },
+      "id": "kkb-v2-mark-fallback-error-bia-persisted",
+      "name": "Mark fallback ERROR_BIA persisted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3440,
+        -260
+      ],
+      "notes": "This marker is reachable only from the successful Google Sheets append output, so admin diagnostics are never sent for an unpersisted fallback."
+    },
+    {
+      "parameters": {
+        "jsCode": "const readNode = (name) => { try { return $(name).first()?.json ?? {}; } catch { return {}; } }; const decision = readNode('Router Decision').decision ?? {}; const row = decision.reservation?.row; if (!row) return []; const errorResult = readNode('Call WF02 Error Handler'); const fallbackResult = readNode('Append fallback ERROR_BIA'); const errorId = String(errorResult.response?.error_id ?? fallbackResult.error_id ?? '').trim(); return [{ json: { idempotency_key: row.idempotency_key, status: 'FAILED', error_id: errorId, updated_at: new Date().toISOString() } }];"
       },
       "id": "kkb-v2-project-operation-failed",
       "name": "Project OPERATION failed",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3000,
+        3440,
         -120
       ]
     },
@@ -506,7 +572,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        3220,
+        3660,
         -120
       ],
       "credentials": {
@@ -517,17 +583,103 @@
     },
     {
       "parameters": {
-        "jsCode": "const source = $('Router Decision').first()?.json ?? {}; const errorResult = $('Call WF02 Error Handler').first()?.json ?? {}; return [{ json: { reply_target: source.reply_target, text: errorResult.response?.message_safe ?? source.decision?.worker_failure_text ?? '' } }];"
+        "jsCode": "const readNode = (name) => { try { return $(name).first()?.json ?? {}; } catch { return {}; } }; const source = readNode('Router Decision'); const errorResult = readNode('Call WF02 Error Handler'); const fallbackResult = readNode('Mark fallback ERROR_BIA persisted'); const errorId = String(errorResult.response?.error_id ?? fallbackResult.error_id ?? '').trim(); const template = String(source.decision?.worker_error_message_template ?? \"Không thể hoàn tất thao tác. Mã lỗi: {error_id}. Vui lòng gửi mã này cho quản trị viên.\"); const fallbackText = template.replaceAll('{error_id}', errorId || '—'); const clean = (value, limit = 160) => String(value ?? '').replace(/[\\u0000-\\u001f\\u007f]/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, limit); const configured = source.decision?.error_alert_target ?? {}; const chatId = clean(configured.chat_id, 32); const threadId = clean(configured.message_thread_id, 20); const validTarget = /^-?\\d{1,20}$/.test(chatId) && !/^-?0+$/.test(chatId) && /^\\d{1,16}$/.test(threadId) && !/^0+$/.test(threadId); const persisted = fallbackResult.fallback_persisted === true && clean(fallbackResult.error_id, 160) && clean(fallbackResult.operation_id, 160) && clean(fallbackResult.error_code, 80); const alertText = validTarget && persisted ? ['WF03 error fallback', `error_id=${clean(fallbackResult.error_id)}`, `operation_id=${clean(fallbackResult.operation_id)}`, `config_version=${clean(fallbackResult.config_version, 80) || 'unknown'}`, `node=${clean(fallbackResult.node, 120) || 'unknown'}`, `error_code=${clean(fallbackResult.error_code, 80)}`].join('\\n').slice(0, 1200) : ''; return [{ json: { reply_target: source.reply_target, text: errorResult.response?.message_safe ?? fallbackResult.message_safe ?? fallbackText, alert_target: alertText ? { chat_id: chatId, message_thread_id: threadId } : null, alert_text: alertText } }];"
       },
       "id": "kkb-v2-project-worker-failure-reply",
       "name": "Project Worker Failure Reply",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3440,
+        3880,
         -120
       ],
-      "notes": "Never sends the accepted text when the worker returned false or threw; uses the sanitized WF02 message."
+      "notes": "User failure reply is preserved. A separate admin alert is produced only for a persisted WF02 fallback and a complete numeric CONFIG_GLOBAL target; alert fields are allowlisted and control characters are removed."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{Boolean($json.alert_text && $json.alert_target?.chat_id && $json.alert_target?.message_thread_id)}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-error-alert-configured-",
+      "name": "Error Alert Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4100,
+        -120
+      ],
+      "notes": "Missing destination, missing persisted fallback, or invalid IDs skip the alert without interrupting the user failure reply."
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $json ?? {}; if (!source.alert_target?.chat_id || !source.alert_target?.message_thread_id || !source.alert_text) return []; return [{ json: { chat_id: source.alert_target.chat_id, message_thread_id: source.alert_target.message_thread_id, text: source.alert_text } }];"
+      },
+      "id": "kkb-v2-prepare-admin-error-alert",
+      "name": "Prepare Admin Error Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4320,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$json.chat_id}}",
+        "text": "={{$json.text}}",
+        "additionalFields": {
+          "message_thread_id": "={{$json.message_thread_id}}"
+        }
+      },
+      "id": "kkb-v2-send-admin-error-alert",
+      "name": "Send Admin Error Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4540,
+        -240
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "TELEGRAM_KKB_V2"
+        }
+      },
+      "notes": "Sends the allowlisted, sanitized fallback diagnostic to the configured admin group/topic. Alert delivery failure continues to the normal user-facing failure reply.",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Project Worker Failure Reply').first()?.json ?? {}; return [{ json: { reply_target: source.reply_target, text: source.text } }];"
+      },
+      "id": "kkb-v2-restore-worker-failure-reply",
+      "name": "Restore Worker Failure Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4760,
+        -120
+      ],
+      "notes": "Restores the user-facing failure reply whether the admin alert was skipped, delivered, or failed."
     },
     {
       "parameters": {
@@ -929,6 +1081,46 @@
         ],
         [
           {
+            "node": "Prepare Fallback ERROR_BIA row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Fallback ERROR_BIA row": {
+      "main": [
+        [
+          {
+            "node": "Append fallback ERROR_BIA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append fallback ERROR_BIA": {
+      "main": [
+        [
+          {
+            "node": "Mark fallback ERROR_BIA persisted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Project OPERATION failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark fallback ERROR_BIA persisted": {
+      "main": [
+        [
+          {
             "node": "Project OPERATION failed",
             "type": "main",
             "index": 0
@@ -959,6 +1151,64 @@
       ]
     },
     "Project Worker Failure Reply": {
+      "main": [
+        [
+          {
+            "node": "Error Alert Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Alert Configured?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Admin Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Restore Worker Failure Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Admin Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Admin Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Admin Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Restore Worker Failure Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Restore Worker Failure Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Worker Failure Reply": {
       "main": [
         [
           {
