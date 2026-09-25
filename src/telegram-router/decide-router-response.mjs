@@ -1,4 +1,5 @@
-import { isWithinEffectiveWindow } from './permission-window.mjs';
+import { authorizeCommand } from './authorize-command.mjs';
+import { planRetry } from './retry-command.mjs';
 
 const routerText = (value) => (value == null ? '' : String(value).trim());
 const routerActive = (row) => routerText(row?.trang_thai).toUpperCase() === 'ACTIVE';
@@ -40,32 +41,24 @@ function routerStatusText(gatewayResult, context) {
 function routerCanViewCommand(row, config, context, actorUserId, now, activeBranchIds) {
   if (routerText(row.topic_type) && !routerText(row.worker_workflow)) return false;
   const permission = routerText(row.permission_code);
-  if (!permission) return ['/help', '/trangthai'].includes(routerText(row.command_text).toLowerCase());
-  const user = (context.CONFIG_USER ?? []).find((candidate) => routerText(candidate.user_id) === routerText(actorUserId));
-  if (!user || !routerActive(user)) return false;
-  const permissions = new Set((config.CONFIG_PERMISSION ?? []).filter(routerActive).map((candidate) => routerText(candidate.permission_code)));
-  if (!permissions.has(permission)) return false;
-  const roles = new Set((config.CONFIG_ROLE ?? []).filter(routerActive).map((candidate) => routerText(candidate.role_code)));
-  const mappings = (config.CONFIG_ROLE_PERMISSION ?? []).filter((candidate) => routerActive(candidate) && routerText(candidate.permission_code) === permission);
+  const command = routerText(row.command_text) || routerText(row.command_code);
+  const tables = { ...config, ...context };
+  if (!permission) return authorizeCommand({ actorUserId, command, tables, now }).allowed;
   const topicType = routerText(row.topic_type);
   const topics = (config.CONFIG_TOPIC ?? []).filter((candidate) => routerActive(candidate)
     && activeBranchIds.has(routerText(candidate.branch_id))
     && (!topicType || routerText(candidate.topic_type) === topicType));
-  return (config.CONFIG_USER_ROLE ?? []).some((assignment) => routerActive(assignment)
-    && routerText(assignment.user_id) === routerText(actorUserId)
-    && isWithinEffectiveWindow(assignment, now)
-    && roles.has(routerText(assignment.role_code))
-    && mappings.some((mapping) => routerText(mapping.role_code) === routerText(assignment.role_code))
-    && topics.some((topic) => routerText(assignment.branch_id) === '*' || routerText(topic.branch_id) === routerText(assignment.branch_id)));
+  return topics.some((topic) => authorizeCommand({ actorUserId, command, topic, tables, now }).allowed);
 }
 
 function routerFindTopic(normalized, config, activeBranchIds, commandRow) {
   const topicType = routerText(commandRow?.topic_type);
-  return (config.CONFIG_TOPIC ?? []).find((row) => routerActive(row)
-    && activeBranchIds.has(routerText(row.branch_id))
+  const matches = (config.CONFIG_TOPIC ?? []).filter((row) => routerActive(row)
     && routerText(row.chat_id) === routerText(normalized?.reply_target?.chat_id)
-    && routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id)
-    && (!topicType || routerText(row.topic_type) === topicType));
+    && routerText(row.message_thread_id) === routerText(normalized?.reply_target?.message_thread_id));
+  if (matches.length !== 1) return null;
+  if (!activeBranchIds.has(routerText(matches[0].branch_id))) return null;
+  return !topicType || routerText(matches[0].topic_type) === topicType ? matches[0] : null;
 }
 
 function routerHelpText(config, context, actorUserId, now, activeBranchIds) {
@@ -112,24 +105,8 @@ function routerAuditPlan(normalized, context, errorCode, topic, now) {
 }
 
 function routerAuthorized({ actorUserId, command, topic, config, context, now, activeBranchIds }) {
-  const user = (context.CONFIG_USER ?? []).find((row) => routerText(row.user_id) === routerText(actorUserId));
-  if (!user || !routerActive(user)) return false;
-  if (command === '/trangthai') return true;
-  const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === routerText(command).toLowerCase());
-  const permission = routerText(commandRow?.permission_code);
-  if (!permission) return ['/help', '/trangthai'].includes(routerText(command).toLowerCase());
-  if (!topic || !routerActive(topic)) return false;
-  if (!activeBranchIds.has(routerText(topic.branch_id))) return false;
-  const permissions = new Set((config.CONFIG_PERMISSION ?? []).filter(routerActive).map((row) => routerText(row.permission_code)));
-  if (!permissions.has(permission)) return false;
-  const roles = new Set((config.CONFIG_ROLE ?? []).filter(routerActive).map((row) => routerText(row.role_code)));
-  const mappings = (config.CONFIG_ROLE_PERMISSION ?? []).filter((row) => routerActive(row) && routerText(row.permission_code) === permission);
-  return (config.CONFIG_USER_ROLE ?? []).some((row) => routerActive(row)
-    && routerText(row.user_id) === routerText(actorUserId)
-    && isWithinEffectiveWindow(row, now)
-    && (routerText(row.branch_id) === '*' || routerText(row.branch_id) === routerText(topic.branch_id))
-    && roles.has(routerText(row.role_code))
-    && mappings.some((mapping) => routerText(mapping.role_code) === routerText(row.role_code)));
+  if (command !== '/trangthai' && (!topic || !routerActive(topic) || !activeBranchIds.has(routerText(topic.branch_id)))) return false;
+  return authorizeCommand({ actorUserId, command, topic, tables: { ...config, ...context }, now }).allowed;
 }
 
 export function decideRouterResponse({ normalized, gatewayResult, now = new Date().toISOString() } = {}) {
@@ -155,19 +132,15 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
     const errorId = routerText(normalized?.args?.[0]);
     const retryCommand = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === '/retry');
     const topic = routerFindTopic(normalized, config, activeBranchIds, retryCommand);
-    const error = (context.ERROR_BIA ?? []).find((row) => routerText(row.error_id) === errorId && routerText(row.status).toUpperCase() !== 'RESOLVED');
-    if (!retryCommand || !routerAuthorized({ actorUserId: normalized?.envelope?.actor_user_id, command: '/retry', topic, config, context, now, activeBranchIds })) {
-      return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', `err-${errorId || 'unknown'}-retry-denied`) };
+    const retryResult = planRetry({ actorUserId: normalized?.envelope?.actor_user_id, errorId, topic, tables: { ...config, ...context }, now });
+    const errorCode = retryResult.response?.error_code ?? 'ERROR_GENERIC';
+    if (errorCode === 'USER_NOT_AUTHORIZED' || !retryCommand || !routerActive(topic)) {
+      return { decision: { kind: 'DENY', write_plan: routerAuditPlan(normalized, context, 'USER_NOT_AUTHORIZED', topic, now) }, text: routerErrorText(gatewayResult, context, 'USER_NOT_AUTHORIZED', retryResult.response?.error_id || `err-${errorId || 'unknown'}-retry-denied`) };
     }
-    if (!error) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_FOUND', `err-${errorId || 'unknown'}-not-found`) };
-    if (!['YES', 'TRUE', '1'].includes(routerText(error.retryable).toUpperCase())) return { decision: base, text: routerErrorText(gatewayResult, context, 'ERROR_NOT_RETRYABLE', errorId) };
-    const operationId = routerText(error.operation_id);
-    const operation = (context.OPERATION ?? []).find((row) => routerText(row.operation_id) === operationId);
-    const idempotencyKey = routerText(operation?.idempotency_key) || routerText(error.request_id) || operationId;
-    const retry = { error_id: errorId, operation_id: operationId, idempotency_key: idempotencyKey };
+    if (!retryResult.retry) return { decision: base, text: routerErrorText(gatewayResult, context, errorCode, retryResult.response?.error_id || errorId) };
     return {
-      decision: { kind: 'RETRY_UNAVAILABLE', retry, write_plan: [] },
-      text: routerErrorText(gatewayResult, context, 'ERROR_GENERIC', `err-${errorId}-retry-payload-unavailable`),
+      decision: { kind: 'RETRY_UNAVAILABLE', retry: retryResult.retry, write_plan: [] },
+      text: routerErrorText(gatewayResult, context, errorCode, retryResult.response?.error_id || `err-${errorId}-retry-payload-unavailable`),
     };
   }
   const commandRow = (config.CONFIG_LENH ?? []).find((row) => routerActive(row) && routerText(row.command_text).toLowerCase() === command);
@@ -202,6 +175,7 @@ export function decideRouterResponse({ normalized, gatewayResult, now = new Date
       worker_envelope: workerEnvelope,
       worker_failure_error_id: workerFailureId,
       worker_failure_text: routerErrorText(gatewayResult, context, 'ERROR_GENERIC', workerFailureId),
+      worker_error_message_template: routerMessages(gatewayResult, context).get('ERROR_GENERIC') || 'ERROR error_id={error_id}',
       route: {
         command_code: routerText(commandRow.command_code),
         topic_type: routerText(commandRow.topic_type),

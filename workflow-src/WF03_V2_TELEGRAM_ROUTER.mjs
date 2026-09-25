@@ -14,6 +14,8 @@ return [{ json: normalized }];
 export async function decisionCode() {
   return codeNode(`
 ${await sourceFile('src/telegram-router/permission-window.mjs')}
+${await sourceFile('src/telegram-router/authorize-command.mjs')}
+${await sourceFile('src/telegram-router/retry-command.mjs')}
 ${await sourceFile('src/telegram-router/decide-router-response.mjs')}
 
 const normalized = $('Normalize Telegram Update').first()?.json ?? {};

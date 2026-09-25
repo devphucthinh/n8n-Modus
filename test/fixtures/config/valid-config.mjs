@@ -155,9 +155,9 @@ const routerRows = {
   ],
   CONFIG_TOPIC: [
     ['topic-kiem-ke', 'CN_HN', 'KIEM_KE', '-100100', '77', 'ACTIVE'],
-    ['topic-nhap-hang', 'CN_HN', 'NHAP_HANG', '-100100', '77', 'ACTIVE'],
-    ['topic-nhap-ban', 'CN_HN', 'NHAP_BAN', '-100100', '77', 'ACTIVE'],
-    ['topic-bao-cao', 'CN_HN', 'BAO_CAO', '-100100', '77', 'ACTIVE'],
+    ['topic-nhap-hang', 'CN_HN', 'NHAP_HANG', '-100100', '78', 'ACTIVE'],
+    ['topic-nhap-ban', 'CN_HN', 'NHAP_BAN', '-100100', '79', 'ACTIVE'],
+    ['topic-bao-cao', 'CN_HN', 'BAO_CAO', '-100100', '80', 'ACTIVE'],
   ],
   CONFIG_LENH: [
     ['CMD_KIEM_KE', '/kiemke', '/kiemke', 'Mở phiên kiểm kê', 'KIEM_KE_WRITE', 'KIEM_KE', 'WF05RouterTest001', '/kiemke', '10', 'ACTIVE'],

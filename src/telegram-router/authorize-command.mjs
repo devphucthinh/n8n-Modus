@@ -1,68 +1,54 @@
 import { isWithinEffectiveWindow } from './permission-window.mjs';
 
-const asText = (value) => (value == null ? '' : String(value).trim());
-const active = (row) => asText(row?.trang_thai).toUpperCase() === 'ACTIVE';
+const authorizationText = (value) => (value == null ? '' : String(value).trim());
+const active = (row) => authorizationText(row?.trang_thai).toUpperCase() === 'ACTIVE';
 
 const denied = () => ({ allowed: false, denial_code: 'USER_NOT_AUTHORIZED', permission_code: null, branch_id: null, role_codes: [] });
 
+function eligibleAssignments({ actorUserId, permissionCode, tables, now, topic = null }) {
+  const userId = authorizationText(actorUserId);
+  const topicBranch = authorizationText(topic?.branch_id);
+  const permissions = new Set((tables?.CONFIG_PERMISSION ?? []).filter(active).map((row) => authorizationText(row.permission_code)));
+  if (!permissions.has(authorizationText(permissionCode))) return [];
+  const roles = new Set((tables?.CONFIG_ROLE ?? []).filter(active).map((row) => authorizationText(row.role_code)));
+  const mappings = (tables?.CONFIG_ROLE_PERMISSION ?? []).filter((row) => active(row) && authorizationText(row.permission_code) === authorizationText(permissionCode));
+  return (tables?.CONFIG_USER_ROLE ?? [])
+    .filter((row) => active(row) && authorizationText(row.user_id) === userId && isWithinEffectiveWindow(row, now))
+    .filter((row) => (authorizationText(row.branch_id) === '*' || !topic || authorizationText(row.branch_id) === topicBranch) && roles.has(authorizationText(row.role_code)))
+    .filter((row) => mappings.some((mapping) => authorizationText(mapping.role_code) === authorizationText(row.role_code)));
+}
+
 export function authorizeCommand({ actorUserId, command, topic = null, tables, now = new Date().toISOString() } = {}) {
-  const userId = asText(actorUserId);
-  const user = (tables?.CONFIG_USER ?? []).find((row) => asText(row.user_id) === userId);
+  const userId = authorizationText(actorUserId);
+  const user = (tables?.CONFIG_USER ?? []).find((row) => authorizationText(row.user_id) === userId);
   if (!user || !active(user)) return denied();
-  const commandText = asText(command).toLowerCase();
+  const commandText = authorizationText(command).toLowerCase();
   if (commandText === '/trangthai') {
-    return { allowed: true, denial_code: null, permission_code: null, branch_id: asText(user.branch_id) || null, role_codes: [] };
+    return { allowed: true, denial_code: null, permission_code: null, branch_id: authorizationText(user.branch_id) || null, role_codes: [] };
   }
-  const commandRow = (tables?.CONFIG_LENH ?? []).find((row) => active(row) && asText(row.command_text).toLowerCase() === commandText);
+  const commandRow = (tables?.CONFIG_LENH ?? []).find((row) => active(row) && authorizationText(row.command_text).toLowerCase() === commandText);
   if (!commandRow) return denied();
-  const permissionCode = asText(commandRow.permission_code);
+  const permissionCode = authorizationText(commandRow.permission_code);
   if (!permissionCode) {
     if (!['/help', '/trangthai'].includes(commandText)) return denied();
-    return { allowed: true, denial_code: null, permission_code: null, branch_id: asText(topic?.branch_id) || asText(user.branch_id) || null, role_codes: [] };
+    return { allowed: true, denial_code: null, permission_code: null, branch_id: authorizationText(topic?.branch_id) || authorizationText(user.branch_id) || null, role_codes: [] };
   }
   if (!topic || !active(topic)) return denied();
-  const topicBranch = asText(topic.branch_id);
-  const permissions = new Set((tables?.CONFIG_PERMISSION ?? []).filter(active).map((row) => asText(row.permission_code)));
-  if (!permissions.has(permissionCode)) return denied();
-  const roles = new Set((tables?.CONFIG_ROLE ?? []).filter(active).map((row) => asText(row.role_code)));
-  const rolePermissions = (tables?.CONFIG_ROLE_PERMISSION ?? []).filter((row) => active(row) && asText(row.permission_code) === permissionCode);
-  const eligible = (tables?.CONFIG_USER_ROLE ?? [])
-    .filter((row) => active(row) && asText(row.user_id) === userId && isWithinEffectiveWindow(row, now))
-    .filter((row) => (asText(row.branch_id) === '*' || asText(row.branch_id) === topicBranch) && roles.has(asText(row.role_code)))
-    .filter((row) => rolePermissions.some((mapping) => asText(mapping.role_code) === asText(row.role_code)));
+  const topicBranch = authorizationText(topic.branch_id);
+  const eligible = eligibleAssignments({ actorUserId: userId, permissionCode, tables, now, topic });
   if (eligible.length === 0) return denied();
   return {
     allowed: true,
     denial_code: null,
     permission_code: permissionCode,
     branch_id: topicBranch,
-    role_codes: [...new Set(eligible.map((row) => asText(row.role_code)))],
+    role_codes: [...new Set(eligible.map((row) => authorizationText(row.role_code)))],
   };
 }
 
 export function hasPermission({ actorUserId, permissionCode, tables, now, topic = null } = {}) {
-  const userId = asText(actorUserId);
-  const user = (tables?.CONFIG_USER ?? []).find((row) => asText(row.user_id) === userId);
+  const userId = authorizationText(actorUserId);
+  const user = (tables?.CONFIG_USER ?? []).find((row) => authorizationText(row.user_id) === userId);
   if (!user || !active(user)) return false;
-  const permissions = new Set((tables?.CONFIG_PERMISSION ?? []).filter(active).map((row) => asText(row.permission_code)));
-  if (!permissions.has(asText(permissionCode))) return false;
-  const roles = new Set((tables?.CONFIG_ROLE ?? []).filter(active).map((row) => asText(row.role_code)));
-  const mapping = (tables?.CONFIG_ROLE_PERMISSION ?? []).filter((row) => active(row) && asText(row.permission_code) === asText(permissionCode));
-  return (tables?.CONFIG_USER_ROLE ?? [])
-    .filter((row) => active(row) && asText(row.user_id) === userId && isWithinEffectiveWindow(row, now))
-    .filter((row) => asText(row.branch_id) === '*' || !topic || asText(row.branch_id) === asText(topic.branch_id))
-    .some((row) => roles.has(asText(row.role_code)) && mapping.some((entry) => asText(entry.role_code) === asText(row.role_code)));
-}
-
-export function hasRole({ actorUserId, roleCode, tables, now, branchId = '*' } = {}) {
-  const userId = asText(actorUserId);
-  const requestedRole = asText(roleCode);
-  const user = (tables?.CONFIG_USER ?? []).find((row) => asText(row.user_id) === userId);
-  if (!user || !active(user) || !requestedRole) return false;
-  const roles = new Set((tables?.CONFIG_ROLE ?? []).filter(active).map((row) => asText(row.role_code)));
-  return roles.has(requestedRole) && (tables?.CONFIG_USER_ROLE ?? []).some((row) => active(row)
-    && asText(row.user_id) === userId
-    && asText(row.role_code) === requestedRole
-    && asText(row.branch_id) === asText(branchId)
-    && isWithinEffectiveWindow(row, now));
+  return eligibleAssignments({ actorUserId: userId, permissionCode, tables, now, topic }).length > 0;
 }

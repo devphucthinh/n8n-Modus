@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/kiem-ke-bia-v2.md`, issue #3 at `https://github.com/devphucthinh/n8n-Modus/issues/3`, ADR 0005 and ADR 0021.
 
-**Implementation status:** The plan is implemented on `codex/issue-3-telegram-router` and tracked in PR #21. Local workflow build/validation and the complete test suite pass; live n8n/Telegram evidence remains a release gate and is recorded in `docs/testing/issue-3-evidence.md`.
+**Implementation status:** Core Router behavior is implemented on `codex/issue-3-telegram-router` and tracked in PR #21, but Issue #3 is not complete: retry cannot replay without a recoverable source payload, Sheets `appendOrUpdate` is not an atomic concurrent claim, and live n8n/Telegram smoke evidence is pending. The PR evidence and remaining release gates are recorded in `docs/testing/issue-3-evidence.md`.
 
 ## Global Constraints
 
@@ -19,7 +19,7 @@
 - Machine codes use uppercase ASCII identifiers; Vietnamese labels are display-only.
 - `/trangthai` is read-only for every active configured user; every other command needs its configured permission.
 - `branch_id='*'` is the global role scope; inactive or unknown users are denied without revealing roles, branches, or configuration.
-- Repeated `update_id`, callback ID, or retry operation has one effective business effect. Message updates use `tg-<update_id>`; callback updates add a stable `payload.idempotency_key=tg-callback-<callback_id>` and reuse it across Telegram re-deliveries.
+- Repeated `update_id`, callback ID, or retry operation has one effective business effect. Message updates use `tg-<update_id>`; callback updates add a stable `payload.idempotency_key=tg-callback-<callback_id>` and reuse it across Telegram re-deliveries. The current Sheet reservation is only a sequential guard; concurrent single-effect behavior remains an explicit blocker until an atomic claim mechanism is selected and verified.
 - Workflow exports are inactive, contain no secrets, and use `GOOGLE_SHEETS_KKB_V2`/`TELEGRAM_KKB_V2` credential names.
 - Accepted routes reserve `OPERATION.idempotency_key` with a `PREPARED` row before Telegram ACK; Google Sheets uses `appendOrUpdate` matching `idempotency_key`, while access audit uses `event_id`.
 - Existing WF01/WF02/WF03 Issue #2 behavior and live `/trangthai` path must remain green.

@@ -34,6 +34,24 @@ test('does not reserve or acknowledge a command without a configured worker work
   assert.doesNotMatch(help.reply.text, /\/kiemke/);
 });
 
+test('rejects an ambiguous active chat and topic mapping instead of routing the first match', () => {
+  const tables = validConfigWithRouterTables();
+  const existing = tables.CONFIG_TOPIC.find((row) => row.topic_type === 'KIEM_KE');
+  tables.CONFIG_BRANCH.push({ ...tables.CONFIG_BRANCH[0], branch_id: 'CN_OTHER', branch_name: 'Branch inactive', trang_thai: 'INACTIVE' });
+  tables.CONFIG_TOPIC.push({
+    ...existing,
+    topic_id: 'duplicate-topic-mapping',
+    branch_id: 'CN_OTHER',
+    topic_type: 'NHAP_HANG',
+  });
+
+  const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/kiemke' }), tables, now: FIXED_NOW });
+
+  assert.equal(result.decision.kind, 'DENY');
+  assert.equal(result.decision.reservation, undefined);
+  assert.doesNotMatch(result.reply.text, /Đã tiếp nhận lệnh/);
+});
+
 test('does not expose gateway ledger writes as a router audit plan for status', () => {
   const result = runRouterFlow({ update: telegramStatusUpdate({ text: '/trangthai' }), tables: validConfigWithRouterTables(), now: FIXED_NOW });
   assert.equal(result.decision.kind, 'STATUS');

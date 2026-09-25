@@ -7,14 +7,14 @@ Tài liệu này là handoff triển khai cho PR của issue #3. Nó không ch�
 - WF03 là Telegram ingress duy nhất và nhận `message`, `edited_message`, `callback_query`.
 - Mỗi update được chuẩn hóa thành envelope có `request_id=operation_id=tg-<update_id>`; callback, bot suffix, tham số và forum thread được giữ lại. Actor của callback lấy từ `callback_query.from`, không lấy sender của message chứa nút. Callback có thêm `payload.idempotency_key=tg-callback-<callback_id>` để chống xử lý lặp khi Telegram phát lại với `update_id` khác.
 - Config Gateway đọc sáu tab cấu hình router khi request cần nghiệp vụ: `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_TOPIC`, `CONFIG_LENH`; `EVENT_LOG` được đọc để chống ghi audit trùng và ghi access-denied.
-- Với command nghiệp vụ, Router tạo standard envelope, đặt reservation `OPERATION=PREPARED`, gọi workflow có ID trong `CONFIG_LENH.worker_workflow`, chờ worker, rồi chỉ gửi lời xác nhận khi worker trả `ok: true`. Worker nhận `{ envelope }` với `request_id`, `operation_id`, `branch_id`, `config_version` và `payload` giữ `idempotency_key`.
-- Nếu workflow ID trống hoặc worker báo lỗi/không trả `ok: true`, Router không gửi lời xác nhận thành công; reservation được đánh dấu `FAILED` và Telegram chỉ nhận thông báo lỗi an toàn.
+- Với command nghiệp vụ, Router yêu cầu Config Gateway xác thực phiên bản/fingerprint, ghi snapshot cấu hình mới nếu cần, rồi tạo standard envelope, đặt reservation `OPERATION=PREPARED`, gọi workflow có ID trong `CONFIG_LENH.worker_workflow`, chờ worker, và chỉ gửi lời xác nhận khi worker trả `ok: true`. Worker nhận `{ envelope }` với `request_id`, `operation_id`, `branch_id`, `config_version` và `payload` giữ `idempotency_key`.
+- Nếu workflow ID trống hoặc worker báo lỗi/không trả `ok: true`, Router không gửi lời xác nhận thành công; lỗi đã làm sạch đi qua WF02 và được ghi trong `ERROR_BIA`, sau đó reservation được đánh dấu `FAILED`. Nếu chính WF02 không chạy được, Router dùng error ID dự phòng nhưng không thể bảo đảm có dòng `ERROR_BIA`.
 - `worker_workflow` phải là **n8n workflow ID thực tế**, không phải tên hiển thị. Thay đổi workflow đích bằng CONFIG_LENH; không hard-code các ID worker trong artifact.
 - `/help` lấy lệnh active có worker đã cấu hình từ `CONFIG_LENH`, sắp theo `ordinal`, hiển thị command, cú pháp, mô tả, quyền và ví dụ; lệnh không cần quyền ghi `Không yêu cầu`.
 - `/trangthai` vẫn là đường đọc trạng thái cho user active; user unknown/inactive nhận cùng một denial an toàn.
 - `/retry <error_id>` kiểm tra quyền bằng mapping trong Sheet và chấp nhận gán quyền theo branch. ERROR_BIA/OPERATION hiện không lưu payload nguồn có thể phát lại, nên Router giữ các khóa gốc nhưng **fail-closed** với `retry-payload-unavailable`; không trả “đã nhận” và không gọi worker. Đây vẫn là blocker để nghiệm thu retry của Issue #3.
 - Access-denied audit dùng `event_id` xác định theo idempotency key và không append lần hai cho cùng một update/callback.
-- WF03 tạo reservation `OPERATION=PREPARED` trước khi gọi worker; sau kết quả cập nhật thành `COMMITTED` hoặc `FAILED`. Node Google Sheets dùng `appendOrUpdate` theo `idempotency_key`; kiểm tra lặp chặn trạng thái `PREPARED`, `COMMITTED`, `FAILED`. Đây là guard tuần tự, **không phải atomic claim giữa các execution đồng thời**; worker vẫn phải idempotent theo `operation_id`/`idempotency_key`. Access audit dùng `appendOrUpdate` theo `event_id`.
+- WF03 tạo reservation `OPERATION=PREPARED` trước khi gọi worker; sau kết quả cập nhật thành `COMMITTED` hoặc `FAILED`. Node Google Sheets dùng `appendOrUpdate` theo `idempotency_key`; kiểm tra lặp chặn trạng thái `PREPARED`, `COMMITTED`, `FAILED`. Đây là guard tuần tự, **không phải atomic claim giữa các execution đồng thời**; worker vẫn phải idempotent theo `operation_id`/`idempotency_key`, và bảo đảm single-effect dưới concurrency vẫn là blocker. Access audit dùng `appendOrUpdate` theo `event_id`.
 - WF03 khôi phục `reply_target`/`text` sau khi ghi `EVENT_LOG` hoặc reservation; `/help` dài được chia thành nhiều tin nhắn Telegram để không cắt mất lệnh. Callback query được node `Answer Telegram Callback` xác nhận bằng Telegram `answerQuery`.
 - `/trangthai` không đưa write plan ledger của Gateway vào nhánh audit Telegram.
 
@@ -42,7 +42,7 @@ Quy tắc dữ liệu:
 3. `CONFIG_USER_ROLE.branch_id='*'` là phạm vi toàn hệ thống; giá trị khác phải trùng branch của topic.
 4. User phải tồn tại và `ACTIVE` trong `CONFIG_USER`; user unknown/inactive bị từ chối cùng một thông báo chung.
 5. Mỗi command cần một dòng `CONFIG_LENH`. Lệnh cần quyền phải có mapping qua `CONFIG_ROLE_PERMISSION` tới permission `ACTIVE`.
-6. Topic cần khớp chính xác `chat_id`, `message_thread_id` và `topic_type`; không dùng dòng wildcard thread để suy đoán topic từ tên hiển thị.
+6. Mỗi cặp active `chat_id` + `message_thread_id` phải ánh xạ duy nhất tới một chức năng/chi nhánh; nếu trùng, Router từ chối thay vì chọn dòng đầu. Sau đó `topic_type` phải khớp command; không dùng dòng wildcard thread để suy đoán topic từ tên hiển thị.
 7. `/trangthai` và `/help` có thể để `permission_code` trống. `/retry` dùng permission đang khai báo trong `CONFIG_LENH` và mapping `CONFIG_ROLE_PERMISSION`; role assignment có thể toàn cục hoặc giới hạn branch phù hợp với topic hiện tại.
 8. Sau khi thêm sáu tab, thêm schema rule tương ứng vào `CONFIG_SCHEMA`; tăng `config_version` (ví dụ `v1.1`) và ghi chú thay đổi trong `CONFIG_VERSION`.
 9. Thêm schema rule cho `EVENT_LOG`; không sửa trực tiếp các dòng audit đã commit.
@@ -89,5 +89,5 @@ Bản ghi bằng chứng live điền tại `docs/testing/issue-3-evidence.md`.
 ## Rollback và điều kiện đóng issue
 
 - Rollback bằng cách deactivate WF03 mới và giữ nguyên các ledger/config snapshot đã commit; không sửa trực tiếp ledger.
-- Không đóng issue #3 khi chưa có bằng chứng cả đường no-`reply_target` của WF02 và đường Telegram có `reply_target` của WF03 trên môi trường test.
+- Không đóng Issue #3 khi chưa hoàn tất `/retry`, chứng minh claim chống dispatch trùng đồng thời, và có bằng chứng cả đường no-`reply_target` của WF02 lẫn Telegram có `reply_target` của WF03 trên môi trường test.
 - Issue #4 Dispatcher chỉ bắt đầu sau khi PR issue #3 được review, smoke test và merge riêng.

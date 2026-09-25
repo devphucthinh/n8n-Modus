@@ -237,15 +237,67 @@ test('keeps status reads read-only', () => {
   assert.equal(result.diagnostics.read_only, true);
 });
 
-test('keeps router config reads read-only so the router owns the route reservation', () => {
+test('snapshots first-use routed config with an operation identity separate from the route reservation', () => {
   const result = evaluateConfigGateway({
     envelope: { ...writeEnvelope, payload: { command: '/kiemke', intent: 'ROUTE_COMMAND', required_sheet_names: [] } },
     tables: validConfig(),
     now: FIXED_NOW,
   });
   assert.equal(result.ok, true);
+  assert.equal(result.write_plan.length, 4);
+  assert.equal(result.write_plan[0].row.operation_type, 'CONFIG_SNAPSHOT');
+  assert.match(result.write_plan[0].row.operation_id, /^cfg-v1-/);
+  assert.equal(result.response.operation_id, envelope.operation_id);
+  assert.equal(result.diagnostics.reused_snapshot, false);
+});
+
+test('rejects routed commands when config content changed without a version bump', () => {
+  const baseline = evaluateConfigGateway({ envelope: writeEnvelope, tables: validConfig(), now: FIXED_NOW });
+  const tables = withCommittedSnapshot('v1', baseline.response.fingerprint);
+  tables.CONFIG_BRANCH[0].branch_name = 'Tên chưa được version hóa';
+
+  const result = evaluateConfigGateway({
+    envelope: { ...writeEnvelope, payload: { command: '/kiemke', intent: 'ROUTE_COMMAND', required_sheet_names: [] } },
+    tables,
+    now: FIXED_NOW,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_NOT_INCREMENTED');
   assert.deepEqual(result.write_plan, []);
-  assert.equal(result.diagnostics.read_only, true);
+});
+
+test('stores a versioned config snapshot before routing when the config version advanced', () => {
+  const baseline = evaluateConfigGateway({ envelope: writeEnvelope, tables: validConfig(), now: FIXED_NOW });
+  const tables = withCommittedSnapshot('v1', baseline.response.fingerprint);
+  tables.CONFIG_VERSION[0].config_version = 'v2';
+  tables.CONFIG_BRANCH[0].branch_name = 'Chi nhánh đã version hóa';
+
+  const result = evaluateConfigGateway({
+    envelope: { ...writeEnvelope, payload: { command: '/kiemke', intent: 'ROUTE_COMMAND', required_sheet_names: [] } },
+    tables,
+    now: FIXED_NOW,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response.config_version, 'v2');
+  assert.equal(result.write_plan.length, 4);
+  assert.equal(result.write_plan[0].row.operation_type, 'CONFIG_SNAPSHOT');
+  assert.equal(result.write_plan[0].row.request_id, 'cfg-v2');
+  assert.equal(result.write_plan[0].row.idempotency_key, result.response.config_snapshot_id);
+});
+
+test('blocks business routing during configuration maintenance', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION[0].maintenance_mode = 'YES';
+  const result = evaluateConfigGateway({
+    envelope: { ...writeEnvelope, payload: { command: '/kiemke', intent: 'ROUTE_COMMAND', required_sheet_names: [] } },
+    tables,
+    now: FIXED_NOW,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_MAINTENANCE');
 });
 
 test('does not let a committed read-only snapshot poison help or write operations', () => {

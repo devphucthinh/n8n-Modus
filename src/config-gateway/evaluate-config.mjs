@@ -463,6 +463,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const fingerprint = sha256(normalizedConfigJson);
   const predecessor = committedPredecessor(tables);
   const operationType = asText(envelope.payload?.intent || envelope.operation_type || (asText(envelope.payload?.command).toLowerCase().startsWith('/trangthai') ? 'READ_STATUS' : 'START_OPERATION')).toUpperCase();
+  const routeNeedsSnapshot = ['ROUTE_COMMAND', 'MANUAL_RETRY'].includes(operationType);
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
 
   if (maintenanceMode === 'YES' && !['READ_STATUS', 'READ_HELP', 'COMMAND_NOT_AVAILABLE'].includes(operationType)) {
@@ -479,7 +480,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: Boolean(predecessor), read_only: true },
     };
   }
-  if (READ_ONLY_OPERATION_TYPES.has(operationType)) {
+  if (READ_ONLY_OPERATION_TYPES.has(operationType) && !routeNeedsSnapshot) {
     return {
       ok: true,
       response: statusResponse({ envelope: normalizedEnvelope, versionRow, configVersion, schemaVersion, snapshotId: predecessor?.config_snapshot_id ?? null, fingerprint, activeBranches, messages, configTables: requestedConfigTables(tables, requested), contextTables: contextConfigTables(tables, requested) }),
@@ -512,12 +513,12 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   }
 
   const snapshotBaseId = `cfg-${configVersion.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint.slice(0, 16)}`;
-  const operationId = asText(envelope.operation_id) || `op-${snapshotBaseId}`;
-  const requestId = asText(envelope.request_id);
+  const operationId = routeNeedsSnapshot ? snapshotBaseId : asText(envelope.operation_id) || `op-${snapshotBaseId}`;
+  const requestId = routeNeedsSnapshot ? `cfg-${configVersion}` : asText(envelope.request_id);
   const operationIdentity = {
     request_id: requestId,
-    operation_type: operationType,
-    idempotency_key: asText(envelope.payload?.idempotency_key) || requestId || operationId,
+    operation_type: routeNeedsSnapshot ? 'CONFIG_SNAPSHOT' : operationType,
+    idempotency_key: routeNeedsSnapshot ? snapshotBaseId : asText(envelope.payload?.idempotency_key) || requestId || operationId,
     checksum: fingerprint,
   };
   const existingOperation = (tableRows(tables, 'OPERATION') ?? []).find((row) => asText(row.operation_id) === operationId);

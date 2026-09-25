@@ -79,7 +79,7 @@ for (const filename of files) {
       if (!outgoing('Append OPERATION reservation').includes('Prepare Worker Envelope')) errors.push(`${filename}: reservation must precede worker dispatch`);
       if (!outgoing('Execute Configured Worker').includes('Worker succeeded?')) errors.push(`${filename}: worker result must be checked before success`);
       if (!outgoing('Worker succeeded?', 0).includes('Project OPERATION committed')) errors.push(`${filename}: successful workers must commit OPERATION`);
-      if (!outgoing('Worker succeeded?', 1).includes('Project OPERATION failed') || !outgoing('Execute Configured Worker', 1).includes('Project OPERATION failed')) errors.push(`${filename}: worker false/error results must fail OPERATION`);
+      if (!outgoing('Worker succeeded?', 1).includes('Prepare Worker Error Input') || !outgoing('Execute Configured Worker', 1).includes('Prepare Worker Error Input') || !outgoing('Call WF02 Error Handler', 0).includes('Project OPERATION failed')) errors.push(`${filename}: worker false/error results must be logged through WF02 and fail OPERATION`);
     }
   } catch (error) {
     errors.push(`${filename}: ${error.message}`);

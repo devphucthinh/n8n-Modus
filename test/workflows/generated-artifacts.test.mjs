@@ -273,6 +273,9 @@ test('WF03 dispatches the reserved standard envelope to the configured workflow 
   const resultCheck = router.nodes.find((node) => node.name === 'Worker succeeded?');
   const decision = router.nodes.find((node) => node.name === 'Router Decision');
   const failureReply = router.nodes.find((node) => node.name === 'Project Worker Failure Reply');
+  const errorInput = router.nodes.find((node) => node.name === 'Prepare Worker Error Input');
+  const errorHandler = router.nodes.find((node) => node.name === 'Call WF02 Error Handler');
+  const operationFailure = router.nodes.find((node) => node.name === 'Project OPERATION failed');
 
   assert.ok(prepare);
   assert.ok(worker);
@@ -285,14 +288,23 @@ test('WF03 dispatches the reserved standard envelope to the configured workflow 
   assert.match(decision.parameters.jsCode, /idempotency_key/);
   assert.match(decision.parameters.jsCode, /worker-unavailable/);
   assert.ok(failureReply);
-  assert.match(failureReply.parameters.jsCode, /worker_failure_text/);
+  assert.match(failureReply.parameters.jsCode, /message_safe/);
+  assert.ok(errorInput);
+  assert.ok(errorHandler);
+  assert.equal(errorHandler.parameters.workflowId.value, 'MoG6coBccYkIS0nK');
+  assert.equal(errorHandler.parameters.options.waitForSubWorkflow, true);
+  assert.ok(operationFailure);
+  assert.match(operationFailure.parameters.jsCode, /error_id/);
   assert.ok(resultCheck);
   assert.match(resultCheck.parameters.conditions.conditions[0].leftValue, /ok\s*===\s*true/);
   assert.deepEqual(router.connections['Append OPERATION reservation'].main[0].map((target) => target.node), ['Prepare Worker Envelope']);
   assert.deepEqual(router.connections['Execute Configured Worker'].main[0].map((target) => target.node), ['Worker succeeded?']);
   assert.deepEqual(router.connections['Worker succeeded?'].main[0].map((target) => target.node), ['Project OPERATION committed']);
-  assert.deepEqual(router.connections['Worker succeeded?'].main[1].map((target) => target.node), ['Project OPERATION failed']);
-  assert.deepEqual(router.connections['Execute Configured Worker'].main[1].map((target) => target.node), ['Project OPERATION failed']);
+  assert.deepEqual(router.connections['Worker succeeded?'].main[1].map((target) => target.node), ['Prepare Worker Error Input']);
+  assert.deepEqual(router.connections['Execute Configured Worker'].main[1].map((target) => target.node), ['Prepare Worker Error Input']);
+  assert.deepEqual(router.connections['Prepare Worker Error Input'].main[0].map((target) => target.node), ['Call WF02 Error Handler']);
+  assert.deepEqual(router.connections['Call WF02 Error Handler'].main[0].map((target) => target.node), ['Project OPERATION failed']);
+  assert.deepEqual(router.connections['Call WF02 Error Handler'].main[1].map((target) => target.node), ['Project OPERATION failed']);
 
   for (const name of ['Update OPERATION committed', 'Update OPERATION failed']) {
     const update = router.nodes.find((node) => node.name === name);
