@@ -103,3 +103,5 @@ Mỗi ticket cần có: phạm vi, file/workflow/sheet bị tác động, depend
 Đặc tả đã được tạo tại [docs/specs/kiem-ke-bia-v2.md](../specs/kiem-ke-bia-v2.md). Các quyết định sau giai đoạn grill, Phương án A, dispatcher 10 phút, config trên Google Sheets, backup/retention và ranh giới V2/WF04 đã được ghi trong `CONTEXT.md`, các ADR, thiết kế đích và spec; agent mới không cần dựa vào lịch sử chat.
 
 Issue #2 đã được publish thành tracer bullet trên GitHub và có [handoff riêng](./07-issue-2-agent-handoff.md). PR hiện tại là [devphucthinh/n8n-Modus#20](https://github.com/devphucthinh/n8n-Modus/pull/20). Các epic E1–E10 còn lại vẫn phải được tách ticket theo dependency trước khi implement tiếp; không coi issue #2 là đã hoàn tất toàn bộ V2.
+
+Issue #3 đang được triển khai riêng trên nhánh `codex/issue-3-telegram-router`. Handoff/import checklist nằm ở [08-issue-3-router-handoff.md](./08-issue-3-router-handoff.md). Chỉ sau khi PR này được review và smoke test live đạt mới chuyển sang issue #4 Dispatcher.
