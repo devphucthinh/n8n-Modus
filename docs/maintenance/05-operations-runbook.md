@@ -54,6 +54,7 @@
 - [ ] Điền alias OCR và mapping file bán hàng.
 - [ ] Điền lịch, TTL, giới hạn ảnh 5–10, timeout, retry, grace window.
 - [ ] Điền command catalog đầy đủ để `/help` hiển thị lệnh, cú pháp, mô tả và ví dụ.
+- [ ] Với issue #3, tạo đủ sáu tab `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_TOPIC`, `CONFIG_LENH` theo [handoff Router](./08-issue-3-router-handoff.md), rồi cập nhật `CONFIG_SCHEMA` và `config_version`.
 - [ ] Điền folder Drive cho evidence, archive, backup và group/topic báo lỗi.
 - [ ] Đặt mode ban đầu `SHADOW` hoặc giá trị tương đương; chưa bật `V2_PRIMARY`.
 
@@ -71,6 +72,8 @@
 10. Archive thử nghiệm chỉ dọn nguồn sau verification.
 11. Restore từ backup thử nghiệm tái tạo đúng count/checksum.
 12. Error Handler ghi đủ context an toàn và gửi đúng Telegram group lỗi khi bật.
+
+Chi tiết smoke test, import order và mapping workflow ID của Telegram Router nằm trong [handoff issue #3](./08-issue-3-router-handoff.md).
 
 ## Chạy song song và cutover
 

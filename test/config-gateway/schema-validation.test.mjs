@@ -5,8 +5,9 @@ import { envelope, FIXED_NOW, validConfig } from '../fixtures/config/valid-confi
 import { missingColumn } from '../fixtures/config/missing-column.mjs';
 import { duplicateKey } from '../fixtures/config/duplicate-key.mjs';
 
-test('accepts valid config and returns an immutable snapshot ID', () => {
-  const result = evaluateConfigGateway({ envelope, tables: validConfig(), now: FIXED_NOW });
+test('accepts valid config for a write operation and returns an immutable snapshot ID', () => {
+  const operationEnvelope = { ...envelope, payload: { command: '/kiemke', intent: 'START_OPERATION' } };
+  const result = evaluateConfigGateway({ envelope: operationEnvelope, tables: validConfig(), now: FIXED_NOW });
   assert.equal(result.ok, true);
   assert.match(result.response.config_snapshot_id, /^cfg-v1-[a-f0-9]{16}$/);
   assert.equal(result.write_plan.length, 4);

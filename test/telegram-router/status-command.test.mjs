@@ -4,13 +4,15 @@ import { normalizeStatusUpdate } from '../../src/telegram-router/normalize-statu
 import { formatStatus } from '../../src/telegram-router/format-status.mjs';
 import { envelope, FIXED_NOW, validConfig } from '../fixtures/config/valid-config.mjs';
 
-export function telegramStatusUpdate({ userId = '10001', chatId = '-100100', threadId = '77', text = '/trangthai' } = {}) {
+export function telegramStatusUpdate({ userId = '10001', chatId = '-100100', threadId, text = '/trangthai' } = {}) {
+  const command = String(text).trim().split(/\s+/, 1)[0].toLowerCase();
+  const commandThread = { '/nhaphang': '78', '/nhapban': '79', '/baocaobia': '80' }[command];
   return {
     update_id: 9001,
     message: {
       from: { id: userId, first_name: 'Tester' },
       chat: { id: chatId, type: 'supergroup' },
-      message_thread_id: threadId,
+      message_thread_id: threadId ?? commandThread ?? '77',
       text,
     },
   };

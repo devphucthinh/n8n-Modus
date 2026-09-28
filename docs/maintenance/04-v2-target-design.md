@@ -250,8 +250,8 @@ Secret không phải cấu hình nghiệp vụ và không được đặt trong 
 
 Slice đầu tiên đã được đóng gói thành ba workflow bất hoạt để import độc lập:
 
-1. `WF01_V2_CONFIG_GATEWAY`: đọc chín tab core, validate schema/reference/unique, fingerprint SHA-256 và staged snapshot.
+1. `WF01_V2_CONFIG_GATEWAY`: đọc chín tab core, validate schema/reference/unique, fingerprint SHA-256 và staged snapshot. Với issue #3, các tab role/permission/user-role/role-permission/topic/command và `EVENT_LOG` chỉ được đọc ở nhánh request cần router; `/trangthai` không phụ thuộc các tab này.
 2. `WF02_V2_ERROR_HANDLER`: chuẩn hóa lỗi, redaction đệ quy, retryability và `ERROR_BIA` row.
-3. `WF03_V2_TELEGRAM_ROUTER`: Telegram Trigger duy nhất, route `/trangthai`, template hóa phản hồi và nhánh command chưa bật.
+3. `WF03_V2_TELEGRAM_ROUTER`: Telegram Trigger duy nhất, route `/trangthai` và command theo Sheet, phân quyền theo branch/topic, `/help`, callback và access-denied audit.
 
 Các workflow được sinh lại bằng `npm run build:workflows`; kiểm tra cấu trúc, placeholder credential/Sheet ID và secret scan bằng `npm run validate:workflows`. Workflow JSON không chứa token hoặc credential ID thật. Workbook `outputs/issue-2/KKB_V2_CONFIG_BASELINE.xlsx` chỉ là fixture để copy tab vào live Google Sheet.

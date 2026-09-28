@@ -7,10 +7,17 @@ ${await sourceFile('src/contracts/workflow-envelope.mjs')}
 ${await sourceFile('src/config-gateway/sha256.mjs')}
 ${await sourceFile('src/config-gateway/evaluate-config.mjs')}
 
-const triggerInput = $('Execute Workflow Trigger').first()?.json ?? {};
-const readRows = (name) => $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0);
-const tables = Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA'].map((name) => [name, readRows(name)]));
-const envelope = normalizeEnvelope(triggerInput.envelope ?? triggerInput);
+const assembled = $input.first()?.json ?? {};
+const triggerInput = assembled.envelope ? assembled : $('Execute Workflow Trigger').first()?.json ?? {};
+const readRows = (name) => {
+  try {
+    return $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0);
+  } catch {
+    return [];
+  }
+};
+const tables = assembled.tables ?? Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'].map((name) => [name, readRows(name)]));
+const envelope = normalizeEnvelope(assembled.envelope ?? triggerInput.envelope ?? triggerInput);
 const decision = evaluateConfigGateway({ envelope, tables, now: new Date().toISOString() });
 return [{ json: decision }];
 `);
@@ -19,8 +26,14 @@ return [{ json: decision }];
 export async function assembleCode() {
   return codeNode(`
 const triggerInput = $('Execute Workflow Trigger').first()?.json ?? {};
-const readRows = (name) => $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0);
-const tables = Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA'].map((name) => [name, readRows(name)]));
+const readRows = (name) => {
+  try {
+    return $items('Read ' + name).map((item) => item.json).filter((row) => row && Object.keys(row).length > 0);
+  } catch {
+    return [];
+  }
+};
+const tables = Object.fromEntries(['CONFIG_SCHEMA', 'CONFIG_VERSION', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', 'CONFIG_SNAPSHOT', 'OPERATION', 'ERROR_BIA', 'CONFIG_ROLE', 'CONFIG_PERMISSION', 'CONFIG_USER_ROLE', 'CONFIG_ROLE_PERMISSION', 'CONFIG_TOPIC', 'CONFIG_LENH', 'EVENT_LOG'].map((name) => [name, readRows(name)]));
 return [{ json: { envelope: triggerInput.envelope ?? triggerInput, tables } }];
 `);
 }
@@ -38,7 +51,8 @@ return [{ json: row }];
 export function errorInputCode() {
   return codeNode(`
 const result = $('Evaluate Config Gateway').first()?.json ?? {};
-const envelope = $('Execute Workflow Trigger').first()?.json?.envelope ?? $('Execute Workflow Trigger').first()?.json ?? {};
+const triggerInput = $('Execute Workflow Trigger').first()?.json ?? {};
+const envelope = triggerInput.envelope ?? triggerInput;
 return [{ json: {
   error: result.response ?? result,
   context: {
@@ -46,6 +60,7 @@ return [{ json: {
     operation_id: envelope.operation_id,
     workflow: 'WF01_V2_CONFIG_GATEWAY',
   },
+  reply_target: triggerInput.reply_target ?? null,
 } }];
 `);
 }
