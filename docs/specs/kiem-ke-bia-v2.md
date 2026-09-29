@@ -188,7 +188,7 @@ Các workflow dùng chung contract input/output/error, immutable IDs, `config_sn
 
 - Google Sheets live là nguồn cấu hình; `.xlsx` đã gửi chỉ là snapshot tải xuống từ Google Sheets.
 - `CONFIG_SCHEMA` mô tả sheet bắt buộc, cột, kiểu dữ liệu, key duy nhất và version. Workflow đọc theo tên cột, không theo vị trí.
-- `CONFIG_VERSION`/`CONFIG_SNAPSHOT` ghi version, fingerprint và toàn bộ nội dung chuẩn hóa. Phiên/giao dịch lưu `config_snapshot_id` bất biến.
+- `CONFIG_VERSION`/`CONFIG_SNAPSHOT` ghi version, fingerprint và toàn bộ nội dung chuẩn hóa. `normalized_config_json` dùng JSON chuẩn khi vừa giới hạn ô Google Sheets; nếu vượt giới hạn thì dùng envelope `columnar-v1` có thể khôi phục đầy đủ nội dung, còn fingerprint vẫn tính trên JSON chuẩn đầy đủ. Phiên/giao dịch lưu `config_snapshot_id` bất biến.
 - Tên mã máy dùng ASCII, không dấu, không khoảng trắng; nhãn tiếng Việt nằm riêng cho người dùng.
 - Danh sách config gồm tối thiểu: `CONFIG_GLOBAL`, `CONFIG_BRANCH`, `CONFIG_TOPIC`, `CONFIG_LICH`, `CONFIG_USER`, `CONFIG_ROLE`, `CONFIG_PERMISSION`, `CONFIG_USER_ROLE`, `CONFIG_ROLE_PERMISSION`, `CONFIG_BIA`, `CONFIG_QUY_DOI`, `CONFIG_MAPPING_NHAP`, `CONFIG_NGUON_BAN`, `CONFIG_NGUON_BAN_COT`, `CONFIG_LENH`, `CONFIG_THONG_BAO`, `CONFIG_DRIVE`, `CONFIG_BACKUP`, `CONFIG_CUTOVER`.
 - Nhóm ledger/state gồm tối thiểu: `OPERATION`, `DISPATCH_HISTORY`, `STATE_CHO`, `HOA_DON_NHAP`, `ANH_HOA_DON`, `DONG_NHAP`, `OCR_RAW`, `LOG_NHAP`, `DOT_NHAP_BAN`, `DONG_BAN_NGUON`, `LOG_BAN`, `PHIEN_KIEM_KE`, `BIA_LOG`, `BAO_CAO_NGAY`, `BAO_CAO_TUAN`, `DIEU_CHINH_SO`, `EVENT_LOG`, `ERROR_BIA`, `ARCHIVE_INDEX`, `BACKUP_INDEX`.

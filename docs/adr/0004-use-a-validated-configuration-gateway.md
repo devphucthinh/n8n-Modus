@@ -16,6 +16,6 @@ Tên workflow, sheet, cột, trạng thái, quyền và các khóa tham chiếu 
 
 Mã mặt hàng và mã chi nhánh là định danh lịch sử, không bị xóa hoặc tái sử dụng. Khi ngừng dùng, admin chuyển `trang_thai=INACTIVE`; mặt hàng hay chi nhánh mới phải có mã mới. Chi nhánh chỉ được chuyển sang `INACTIVE` khi không còn phiên kiểm kê, hóa đơn nháp hoặc bản bán nháp đang mở.
 
-Mỗi cấu hình hợp lệ được lưu cả dấu vân tay và toàn bộ nội dung chuẩn hóa trong `CONFIG_SNAPSHOT`, có `config_snapshot_id` bất biến. Phiên và giao dịch tham chiếu ID này để có thể tái hiện đúng quy tắc đã áp dụng, không chỉ biết rằng cấu hình từng khác.
+Mỗi cấu hình hợp lệ được lưu cả dấu vân tay và toàn bộ nội dung chuẩn hóa trong `CONFIG_SNAPSHOT`, có `config_snapshot_id` bất biến. Phiên và giao dịch tham chiếu ID này để có thể tái hiện đúng quy tắc đã áp dụng, không chỉ biết rằng cấu hình từng khác. Vì Google Sheets giới hạn 50.000 ký tự cho một ô, `normalized_config_json` dùng JSON chuẩn khi vừa giới hạn; nếu vượt giới hạn, Gateway dùng envelope `columnar-v1` có thể khôi phục đầy đủ các sheet, cột và dòng. Fingerprint luôn tính trên JSON chuẩn đầy đủ, không tính trên payload đóng gói; nếu payload đóng gói vẫn vượt giới hạn thì Gateway từ chối trước khi ghi.
 
 Người có quyền `DUYET_NHAP` được chọn ánh xạ mặt hàng cho hóa đơn hiện tại. Chỉ ADMIN hoặc người có quyền riêng `CONFIG_MAPPING_EDIT` được ghi ánh xạ đó thành cấu hình dùng tự động cho các lần sau.
