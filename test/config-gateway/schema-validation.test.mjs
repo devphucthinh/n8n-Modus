@@ -55,6 +55,35 @@ test('rejects a CONFIG_SCHEMA rule version that differs from active CONFIG_VERSI
   assert.deepEqual(result.write_plan, []);
 });
 
+test('rejects an INACTIVE CONFIG_SCHEMA rule whose version differs from active CONFIG_VERSION', () => {
+  const tables = validConfig();
+  tables.CONFIG_SCHEMA[0].trang_thai = 'INACTIVE';
+  tables.CONFIG_SCHEMA[0].schema_version = '0.9';
+  const result = evaluateConfigGateway({ envelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_SCHEMA_VERSION_MISMATCH');
+  assert.equal(result.response.sheet_name, 'CONFIG_SCHEMA');
+  assert.equal(result.response.row_number, 2);
+  assert.equal(result.response.expected_schema_version, '1.0');
+  assert.equal(result.response.actual_schema_version, '0.9');
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('rejects a numeric CONFIG_SCHEMA schema_version instead of coercing it', () => {
+  const tables = validConfig();
+  tables.CONFIG_SCHEMA[0].schema_version = 46023;
+  const result = evaluateConfigGateway({ envelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_SCHEMA_VERSION_INVALID');
+  assert.equal(result.response.sheet_name, 'CONFIG_SCHEMA');
+  assert.equal(result.response.column_name, 'schema_version');
+  assert.equal(result.response.row_number, 2);
+  assert.equal(result.response.actual_type, 'number');
+  assert.deepEqual(result.write_plan, []);
+});
+
 test('returns a safe normalized error when immutable envelope IDs are missing', () => {
   const result = evaluateConfigGateway({ envelope: { payload: { intent: 'READ_STATUS' } }, tables: validConfig(), now: FIXED_NOW });
   assert.equal(result.ok, false);

@@ -24,6 +24,128 @@ function withCommittedSnapshot(configVersion, fingerprint, status = 'COMMITTED')
 
 const writeEnvelope = { ...envelope, payload: { command: '/kiemke', intent: 'START_OPERATION' } };
 
+test('fails closed when CONFIG_VERSION has no ACTIVE row', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION[0].trang_thai = 'INACTIVE';
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_ACTIVE_COUNT_INVALID');
+  assert.equal(result.response.active_row_count, 0);
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('fails closed when CONFIG_VERSION has multiple ACTIVE rows', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION.push({ ...tables.CONFIG_VERSION[0], config_version: 'v2' });
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_ACTIVE_COUNT_INVALID');
+  assert.equal(result.response.active_row_count, 2);
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('accepts canonical INACTIVE CONFIG_VERSION history beside the sole ACTIVE version', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION.push({
+    ...tables.CONFIG_VERSION[0],
+    config_version: 'v0.9',
+    schema_version: '0.9',
+    trang_thai: 'INACTIVE',
+  });
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response.config_version, 'v1');
+  assert.equal(tables.CONFIG_VERSION.filter((row) => row.trang_thai === 'ACTIVE').length, 1);
+});
+
+test('rejects a numeric config_version on an INACTIVE CONFIG_VERSION row', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION.push({ ...tables.CONFIG_VERSION[0], config_version: 46023, trang_thai: 'INACTIVE' });
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_VALUE_INVALID');
+  assert.equal(result.response.sheet_name, 'CONFIG_VERSION');
+  assert.equal(result.response.column_name, 'config_version');
+  assert.equal(result.response.row_number, 3);
+  assert.equal(result.response.actual_type, 'number');
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('rejects a numeric schema_version on an INACTIVE CONFIG_VERSION row', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION.push({ ...tables.CONFIG_VERSION[0], config_version: 'v2', schema_version: 46023, trang_thai: 'INACTIVE' });
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_VALUE_INVALID');
+  assert.equal(result.response.sheet_name, 'CONFIG_VERSION');
+  assert.equal(result.response.column_name, 'schema_version');
+  assert.equal(result.response.row_number, 3);
+  assert.equal(result.response.actual_type, 'number');
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('rejects a numeric CONFIG_VERSION schema_version instead of coercing it', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION[0].schema_version = 46023;
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_VALUE_INVALID');
+  assert.equal(result.response.sheet_name, 'CONFIG_VERSION');
+  assert.equal(result.response.column_name, 'schema_version');
+  assert.equal(result.response.actual_type, 'number');
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('rejects a numeric CONFIG_VERSION config_version instead of coercing it', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION[0].config_version = 46023;
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_VALUE_INVALID');
+  assert.equal(result.response.sheet_name, 'CONFIG_VERSION');
+  assert.equal(result.response.column_name, 'config_version');
+  assert.equal(result.response.actual_type, 'number');
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('rejects a noncanonical CONFIG_VERSION string', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION[0].config_version = 'V1';
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_VALUE_INVALID');
+  assert.equal(result.response.column_name, 'config_version');
+  assert.deepEqual(result.write_plan, []);
+});
+
+test('rejects a noncanonical CONFIG_VERSION schema_version string', () => {
+  const tables = validConfig();
+  tables.CONFIG_VERSION[0].schema_version = '1.0 ';
+
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_VERSION_VALUE_INVALID');
+  assert.equal(result.response.column_name, 'schema_version');
+  assert.deepEqual(result.write_plan, []);
+});
+
 test('blocks changed content when config_version did not increase', () => {
   const baseline = evaluateConfigGateway({ envelope: writeEnvelope, tables: validConfig(), now: FIXED_NOW });
   const tables = withCommittedSnapshot('v1', baseline.response.fingerprint);

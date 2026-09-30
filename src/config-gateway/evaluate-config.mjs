@@ -3,6 +3,8 @@ import { sha256 } from './sha256.mjs';
 
 const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', ...ROUTER_SHEET_NAMES, ...DISPATCHER_SHEET_NAMES, ...INVENTORY_SHEET_NAMES];
 const SCHEMA_DATA_TYPES = new Set(['STRING', 'INTEGER', 'NUMBER', 'BOOLEAN', 'DATE', 'DATETIME']);
+const CONFIG_VERSION_PATTERN = /^v(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))*$/;
+const SCHEMA_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))*$/;
 const ACTIVE = 'ACTIVE';
 const ACTIVE_COMPOSITE_IDENTITIES = Object.freeze([
   { sheet_name: 'CONFIG_TOPIC', columns: ['branch_id', 'topic_type'] },
@@ -169,7 +171,13 @@ function readSchemaRules(tables, envelope, requested = [], activeSchemaVersion =
   for (const [index, row] of schemaRows.entries()) {
     const sheetName = asText(row.sheet_name);
     const columnName = asText(row.column_name);
-    const ruleSchemaVersion = asText(row.schema_version);
+    const ruleSchemaVersion = row.schema_version;
+    if (typeof ruleSchemaVersion !== 'string' || !SCHEMA_VERSION_PATTERN.test(ruleSchemaVersion)) {
+      return { error: makeFailure('CONFIG_SCHEMA_VERSION_INVALID', 'CONFIG_SCHEMA.schema_version must be a canonical string', envelope, {
+        sheet_name: 'CONFIG_SCHEMA', column_name: 'schema_version', row_number: index + 2,
+        actual_type: ruleSchemaVersion === null ? 'null' : typeof ruleSchemaVersion,
+      }) };
+    }
     if (activeSchemaVersion && ruleSchemaVersion !== activeSchemaVersion) {
       return { error: makeFailure('CONFIG_SCHEMA_VERSION_MISMATCH', `Schema rule at row ${index + 2} does not match the active schema version`, envelope, {
         sheet_name: 'CONFIG_SCHEMA', row_number: index + 2,
@@ -338,8 +346,9 @@ function expandSnapshotPayload(value) {
   return expanded;
 }
 
-function activeVersionRow(tables) {
-  return (tableRows(tables, 'CONFIG_VERSION') ?? []).find((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE') ?? null;
+function activeVersionRows(tables) {
+  return (tableRows(tables, 'CONFIG_VERSION') ?? [])
+    .filter((row) => asText(row.trang_thai).toUpperCase() === ACTIVE);
 }
 
 function versionParts(version) {
@@ -481,6 +490,33 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const tableError = validateCoreTables(tables, normalizedEnvelope);
   if (tableError) return decorateFailure(tableError);
 
+  const versionRows = tableRows(tables, 'CONFIG_VERSION') ?? [];
+  const activeVersions = activeVersionRows(tables);
+  if (activeVersions.length !== 1) {
+    return decorateFailure(makeFailure('CONFIG_VERSION_ACTIVE_COUNT_INVALID', 'CONFIG_VERSION must contain exactly one ACTIVE row', normalizedEnvelope, {
+      sheet_name: 'CONFIG_VERSION', active_row_count: activeVersions.length,
+    }));
+  }
+  const versionRow = activeVersions[0];
+  for (const [index, row] of versionRows.entries()) {
+    for (const [columnName, value, pattern] of [
+      ['config_version', row.config_version, CONFIG_VERSION_PATTERN],
+      ['schema_version', row.schema_version, SCHEMA_VERSION_PATTERN],
+    ]) {
+      if (row === versionRow && columnName === 'config_version' && (value == null || value === '')) {
+        return decorateFailure(makeFailure('CONFIG_VERSION_MISSING', 'Active CONFIG_VERSION row is missing', normalizedEnvelope, {
+          sheet_name: 'CONFIG_VERSION', column_name: columnName, row_number: index + 2,
+        }));
+      }
+      if (typeof value !== 'string' || !pattern.test(value)) {
+        return decorateFailure(makeFailure('CONFIG_VERSION_VALUE_INVALID', `CONFIG_VERSION.${columnName} must be a canonical string`, normalizedEnvelope, {
+          sheet_name: 'CONFIG_VERSION', column_name: columnName, row_number: index + 2,
+          actual_type: value === null ? 'null' : typeof value,
+        }));
+      }
+    }
+  }
+
   const messageError = validateConfiguredMessages(tables, normalizedEnvelope);
   if (messageError) return decorateFailure(messageError);
 
@@ -495,7 +531,7 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     if (missing.length) return decorateFailure(makeFailure('CONFIG_SNAPSHOT_SCOPE_INCOMPLETE', 'Declared configuration sheets were not loaded', normalizedEnvelope, { sheet_names: missing }));
   }
   const validationScope = readOnly ? requested : [...new Set([...requested, ...FINGERPRINT_SHEETS.filter((sheetName) => tableRows(tables, sheetName) !== null)])];
-  const activeSchemaVersion = asText(activeVersionRow(tables)?.schema_version);
+  const activeSchemaVersion = versionRow.schema_version;
   const schemaResult = readSchemaRules(tables, normalizedEnvelope, validationScope, activeSchemaVersion);
   if (schemaResult.error) return decorateFailure(schemaResult.error);
   const rowError = validateRows(tables, schemaResult.rules, normalizedEnvelope);
@@ -508,10 +544,8 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     }
   }
 
-  const versionRow = activeVersionRow(tables);
-  if (!versionRow || isBlank(versionRow.config_version)) return decorateFailure(makeFailure('CONFIG_VERSION_MISSING', 'Active CONFIG_VERSION row is missing', normalizedEnvelope));
-  const configVersion = asText(versionRow.config_version);
-  const schemaVersion = asText(versionRow.schema_version);
+  const configVersion = versionRow.config_version;
+  const schemaVersion = versionRow.schema_version;
   const normalizedConfig = normalizeConfigTables(tables);
   const normalizedConfigJson = canonicalJson(normalizedConfig);
   const fingerprint = sha256(normalizedConfigJson);
