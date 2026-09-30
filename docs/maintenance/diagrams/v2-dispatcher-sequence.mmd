@@ -2,7 +2,7 @@ sequenceDiagram
     autonumber
     participant K as ⏱️ Tick 10 phút
     participant D as WF04 Dispatcher
-    participant C as WF01 Config Gateway
+    participant C as WF01 Heartbeat Gateway
     participant S as 📊 Google Sheets
     participant W as ⚙️ Worker đến hạn
     participant E as WF02 Error Handler
@@ -10,25 +10,40 @@ sequenceDiagram
     K->>D: Đánh thức
     D->>C: Yêu cầu config snapshot
     C->>S: Kiểm tra schema, version và hash
-    S-->>C: Config hợp lệ
-    C-->>D: CONFIG_SNAPSHOT
-    D->>S: Tìm lịch đến hạn hoặc cần chạy bù
-    S-->>D: Danh sách tác vụ
-    loop Mỗi tác vụ đến hạn
-        D->>S: Claim dispatch_key
-        alt Khóa đã hoàn tất hoặc đang chạy
-            S-->>D: SKIP
-        else Claim thành công
-            S-->>D: CLAIMED
-            D->>W: Execute với dispatch_key
-            alt Thành công
-                W->>S: Commit kết quả
-                W-->>D: SUCCESS
-                D->>S: Ghi dispatch SUCCESS
-            else Thất bại
-                W-->>D: FAILED và error envelope
-                D->>S: Ghi FAILED và failure_count
-                D->>E: Chuyển lỗi chuẩn hóa
+    alt Gateway thành công
+        S-->>C: Config hợp lệ
+        C-->>D: CONFIG_SNAPSHOT
+        D->>D: Kiểm tra cấu hình HEARTBEAT ACTIVE hiện tại
+        Note over D,S: Threshold và đích cảnh báo hợp lệ trước mọi lần đọc ledger nghiệp vụ
+        D->>S: Đọc DISPATCH_HISTORY, PHIEN_KIEM_KE, OPERATION và HEARTBEAT
+        S-->>D: Ledger cho tác vụ đến hạn hoặc chạy bù
+        loop Mỗi tác vụ đến hạn
+            D->>S: Claim dispatch_key
+            alt Khóa đã hoàn tất hoặc đang chạy
+                S-->>D: SKIP
+            else Claim thành công
+                S-->>D: CLAIMED
+                D->>W: Execute với dispatch_key
+                alt Thành công
+                    W->>S: Commit kết quả
+                    W-->>D: SUCCESS
+                    D->>S: Ghi dispatch SUCCESS
+                else Thất bại
+                    W-->>D: FAILED và error envelope
+                    D->>S: Ghi FAILED và failure_count
+                    D->>E: Chuyển lỗi chuẩn hóa
+                end
             end
         end
+    else Gateway từ chối hoặc không sẵn sàng
+        S-->>C: Lỗi schema, cấu hình hoặc không sẵn sàng
+        C-->>D: Lỗi Gateway
+        D->>S: Chỉ đọc HEARTBEAT
+        S-->>D: Heartbeat trước hoặc lỗi đọc
+        alt Heartbeat trước tương thích và hợp lệ ngữ nghĩa
+            D->>S: Chỉ ghi HEARTBEAT FAILED, giữ critical_notified, notice trống
+        else Thiếu, rỗng, sai schema, sai ngữ nghĩa hoặc không đọc được
+            D->>D: Fail closed, không ghi
+        end
+        Note over D,E: Không đọc ledger nghiệp vụ, không dispatch, không notice, không gọi WF02
     end

@@ -1,0 +1,4 @@
+# Local rendering dependencies and QA output are not release artifacts.
+node_modules/
+*.inspect.ndjson
+preview-*.png

@@ -4,11 +4,14 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(root, 'workflows');
-const expected = ['WF01_V2_CONFIG_GATEWAY.json', 'WF02_V2_ERROR_HANDLER.json', 'WF03_V2_TELEGRAM_ROUTER.json'];
+const expected = [
+  'WF01_V2_CONFIG_GATEWAY.json', 'WF01_V2_HEARTBEAT_GATEWAY.json',
+  'WF02_V2_ERROR_HANDLER.json', 'WF03_V2_TELEGRAM_ROUTER.json',
+  'WF04_V2_DISPATCHER.json', 'WF05_V2_MO_PHIEN_KIEM_KE.json',
+];
 const googleSheetId = '1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4';
 const workflowTargets = new Map([
   ['Call Error Handler', 'MoG6coBccYkIS0nK'],
-  ['Call Config Gateway', 'WEL83s9bZeB3ixxF'],
   ['Call Config Gateway - Command Check', 'WEL83s9bZeB3ixxF'],
 ]);
 const secretPattern = /\b\d{8,}:[A-Za-z0-9_-]{20,}\b|AIza[0-9A-Za-z_-]{20,}|Bearer\s+[A-Za-z0-9._-]+/;
@@ -29,7 +32,7 @@ for (const filename of files) {
     const known = new Set(workflow.nodes.map((node) => node.name));
     for (const [from, connection] of Object.entries(workflow.connections ?? {})) {
       if (!known.has(from)) errors.push(`${filename}: connection source ${from} missing`);
-      for (const output of connection.main ?? []) for (const target of output) if (!known.has(target.node)) errors.push(`${filename}: connection target ${target.node} missing`);
+      for (const output of connection.main ?? []) for (const target of output ?? []) if (!known.has(target.node)) errors.push(`${filename}: connection target ${target.node} missing`);
     }
     const text = JSON.stringify(workflow);
     if (secretPattern.test(text)) errors.push(`${filename}: possible secret detected`);
@@ -50,11 +53,16 @@ for (const filename of files) {
         }
       }
       if (workflowTargets.has(node.name) && node.parameters?.workflowId?.value !== workflowTargets.get(node.name)) errors.push(`${filename}: Execute Workflow node ${node.name} has an unexpected workflow ID`);
+      if (workflow.name === 'WF04_V2_DISPATCHER' && node.name === 'Call Config Gateway'
+        && node.parameters?.workflowId?.value !== 'BIND_WF01_HEARTBEAT_GATEWAY_WORKFLOW_ID_BEFORE_IMPORT') {
+        errors.push(`${filename}: dispatcher must target the dedicated heartbeat Gateway placeholder`);
+      }
       if (node.type === 'n8n-nodes-base.telegram' || node.type === 'n8n-nodes-base.telegramTrigger') {
         if (node.credentials?.telegramApi?.name !== 'TELEGRAM_KKB_V2') errors.push(`${filename}: Telegram credential mismatch`);
       }
       if (node.type === 'n8n-nodes-base.code' && /\b(?:import|export)\b/.test(node.parameters?.jsCode ?? '')) errors.push(`${filename}: Code node is not self-contained`);
       if (node.type === 'n8n-nodes-base.code') {
+        if (/\bstructuredClone\s*\(/.test(node.parameters?.jsCode ?? '')) errors.push(`${filename}: Code node uses an unavailable structuredClone API`);
         try {
           // Parse the embedded Code node exactly as n8n will compile it. This
           // catches duplicate top-level declarations introduced by bundling.
@@ -63,6 +71,21 @@ for (const filename of files) {
           errors.push(`${filename}: Code node ${node.name} has invalid JavaScript: ${error.message}`);
         }
       }
+    }
+    if (workflow.name === 'WF01_V2_CONFIG_GATEWAY') {
+      const auditGate = workflow.nodes.find((node) => node.name === 'Gateway failure safe to audit?');
+      if (!auditGate || auditGate.parameters?.conditions?.conditions?.[0]?.leftValue !== '={{true}}') errors.push(`${filename}: shared Gateway must always audit failures`);
+      if (!workflow.nodes.some((node) => node.name === 'Call Error Handler')) errors.push(`${filename}: shared Gateway must retain WF02 failure auditing`);
+      if (workflow.nodes.some((node) => node.type === 'n8n-nodes-base.googleSheets' && node.parameters?.operation === 'read' && node.continueOnFail !== true)) errors.push(`${filename}: Gateway reads must route sheet read failures to schema validation`);
+    }
+    if (workflow.name === 'WF01_V2_HEARTBEAT_GATEWAY') {
+      const auditGate = workflow.nodes.find((node) => node.name === 'Gateway failure safe to audit?');
+      const outgoing = workflow.connections?.[auditGate?.name]?.main ?? [];
+      if (workflow.settings?.callerPolicy !== 'workflowsFromAList'
+        || workflow.settings?.callerIds !== 'BIND_WF04_WORKFLOW_ID_BEFORE_IMPORT') errors.push(`${filename}: heartbeat Gateway must use the native WF04-only caller allowlist placeholder`);
+      if (!auditGate || auditGate.parameters?.conditions?.conditions?.[0]?.leftValue !== '={{false}}') errors.push(`${filename}: heartbeat Gateway must bypass WF02 on failure`);
+      if (workflow.nodes.some((node) => node.name === 'Call Error Handler') || (outgoing[0] ?? []).length > 0
+        || (outgoing[1] ?? []).map((target) => target.node).join(',') !== 'Return Gateway Result') errors.push(`${filename}: heartbeat Gateway failure must return directly without auditing through WF02`);
     }
     if (workflow.name === 'WF03_V2_TELEGRAM_ROUTER') {
       const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
@@ -80,6 +103,48 @@ for (const filename of files) {
       if (!outgoing('Execute Configured Worker').includes('Worker succeeded?')) errors.push(`${filename}: worker result must be checked before success`);
       if (!outgoing('Worker succeeded?', 0).includes('Project OPERATION committed')) errors.push(`${filename}: successful workers must commit OPERATION`);
       if (!outgoing('Worker succeeded?', 1).includes('Prepare Worker Error Input') || !outgoing('Execute Configured Worker', 1).includes('Prepare Worker Error Input') || !outgoing('Call WF02 Error Handler', 0).includes('Project OPERATION failed')) errors.push(`${filename}: worker false/error results must be logged through WF02 and fail OPERATION`);
+    }
+    if (workflow.name === 'WF04_V2_DISPATCHER') {
+      const nodeByName = new Map(workflow.nodes.map((node) => [node.name, node]));
+      const outgoing = (name, output = 0) => (workflow.connections?.[name]?.main?.[output] ?? []).map((target) => target.node);
+      const requestCode = nodeByName.get('Prepare Dispatcher Gateway Request')?.parameters?.jsCode ?? '';
+      const decideCode = nodeByName.get('Decide Dispatcher Actions')?.parameters?.jsCode ?? '';
+      const heartbeatSettingsCode = nodeByName.get('Validate current heartbeat settings')?.parameters?.jsCode ?? '';
+      const heartbeatCode = nodeByName.get('Project post-worker HEARTBEAT')?.parameters?.jsCode ?? '';
+      const finalizeCode = nodeByName.get('Finalize Dispatch History')?.parameters?.jsCode ?? '';
+      const ledgerReadNode = nodeByName.get('Decide Dispatcher Actions')?.parameters?.jsCode ?? '';
+      const claimTokenMapping = nodeByName.get('Claim DISPATCH_HISTORY')?.parameters?.columns?.value?.claim_token;
+      const runningTokenMapping = nodeByName.get('Mark Dispatch RUNNING')?.parameters?.columns?.value?.claim_token;
+      if (!/dispatcher_attempt_id/.test(requestCode) || !/heartbeat_id/.test(requestCode) || !/claim_token/.test(requestCode) || /\$execution\b/.test(requestCode)) errors.push(`${filename}: dispatcher entry must create V2-owned attempt, heartbeat, and claim identities without n8n execution metadata`);
+      if (!/Prepare Dispatcher Gateway Request/.test(decideCode) || !/claim_token/.test(decideCode) || !/heartbeat_id/.test(decideCode) || /\$execution\b/.test(decideCode)) errors.push(`${filename}: dispatcher planning must reuse the entry-owned attempt identities`);
+      if (!/validateDispatcherHeartbeatSettings/.test(heartbeatSettingsCode) || !/HEARTBEAT_CONFIG_INVALID/.test(heartbeatSettingsCode)
+        || !outgoing('Gateway configuration available?', 0).includes('Validate current heartbeat settings')
+        || !outgoing('Validate current heartbeat settings').includes('Current heartbeat settings valid?')
+        || !outgoing('Current heartbeat settings valid?', 0).includes('Read DISPATCH_HISTORY')
+        || !outgoing('Current heartbeat settings valid?', 1).includes('Return Dispatcher Result')) {
+        errors.push(`${filename}: current heartbeat settings must fail closed before business-ledger reads`);
+      }
+      if (!/Prepare Dispatcher Gateway Request/.test(heartbeatCode) || !/heartbeat_id/.test(heartbeatCode) || /\$execution\b/.test(heartbeatCode)) errors.push(`${filename}: post-worker heartbeat must reuse the entry-owned heartbeat identity`);
+      if (claimTokenMapping !== '={{$json.claim_token}}' || runningTokenMapping !== '={{$json.claim_token}}' || !/\.\.\.claim/.test(finalizeCode)) errors.push(`${filename}: claim token must survive claim, RUNNING, and finalization`);
+      if (!/readDispatcherLedgers\(/.test(ledgerReadNode)
+        || !/gatewayReady\s*,\s*heartbeatSettingsValid:\s*currentHeartbeatSettings\?\.ok\s*===\s*true/.test(ledgerReadNode)
+        || !/heartbeatRowsValid:\s*\(rows\)\s*=>/.test(ledgerReadNode)
+        || !/validateHeartbeatRows\(rows\)\.ok/.test(ledgerReadNode)
+        || !/HEARTBEAT:\s*'HEARTBEAT'/.test(ledgerReadNode)
+        || !/DISPATCH_HISTORY:\s*'DISPATCH_HISTORY'/.test(ledgerReadNode)
+        || !/OPERATION:\s*'OPERATION for dispatcher'/.test(ledgerReadNode)) {
+        errors.push(`${filename}: the dispatcher adapter must use the tested ledger read policy, with heartbeat first and business reads gated`);
+      }
+      if (!/planGatewayFailureHeartbeat\(/.test(ledgerReadNode)
+        || !/hasValidPersistedHeartbeatSettings/.test(ledgerReadNode)
+        || !/reuseValidatedHeartbeatSettings/.test(ledgerReadNode)) errors.push(`${filename}: Gateway failures must use the fail-closed persisted-heartbeat contract`);
+    }
+    if (workflow.name === 'WF05_V2_MO_PHIEN_KIEM_KE') {
+      const workerCode = workflow.nodes.find((node) => node.name === 'Open or Reuse Inventory Session')?.parameters?.jsCode ?? '';
+      if (!/validateLedgerSchema\(/.test(workerCode) || !/openOrReuseInventorySession\(/.test(workerCode)
+        || workerCode.indexOf('validateLedgerSchema(') > workerCode.indexOf('openOrReuseInventorySession(')) {
+        errors.push(`${filename}: inventory contract validation must precede the session planner`);
+      }
     }
   } catch (error) {
     errors.push(`${filename}: ${error.message}`);

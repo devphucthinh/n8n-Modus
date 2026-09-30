@@ -12,6 +12,8 @@ Không dùng Schedule Trigger riêng cho từng lịch nghiệp vụ vì thay đ
 
 Khi tác vụ mở kiểm kê đến hạn nhưng chi nhánh còn Phiên kiểm kê đang hoạt động, dispatcher không tạo phiên thứ hai. Nó ghi kết quả bỏ qua do phiên đang mở và thông báo người kiểm kê cùng admin để phiên cũ được tiếp tục, chốt hoặc hủy có lý do.
 
-Mỗi nhịp dispatcher ghi heartbeat có thời điểm và kết quả. Nếu ba nhịp liên tiếp không thành công, mặc định tương đương khoảng 30 phút, hệ thống gửi cảnh báo nghiêm trọng tới kênh Error; số nhịp ngưỡng được cấu hình trên Google Sheets. Khi heartbeat khỏe lại, chỉ gửi một thông báo phục hồi.
+Mỗi nhịp dispatcher ghi heartbeat có thời điểm và kết quả. Trên đường chạy Gateway hợp lệ, nếu số lần lỗi đạt ngưỡng cấu hình trong Google Sheets, hệ thống gửi một cảnh báo nghiêm trọng tới kênh Error; khi heartbeat khỏe lại, chỉ gửi một thông báo phục hồi. Ngưỡng và đích thông báo lấy từ cấu hình đã xác thực, không hard-code.
+
+Nếu Gateway từ chối schema/cấu hình hoặc không sẵn sàng, WF04 không dispatch và không phát critical/recovery notice, không gọi WF02 hay ghi `ERROR_BIA`, kể cả ở các lần lỗi lặp lại. Nhánh này chỉ đọc `HEARTBEAT`; khi có heartbeat đã lưu tương thích và hợp lệ về mặt ngữ nghĩa, WF04 ghi `FAILED` từ cấu hình đã lưu, giữ nguyên `critical_notified` và để `notice` trống. Ledger thiếu, không đọc được, rỗng, sai schema hoặc sai ngữ nghĩa thì fail-closed, không ghi heartbeat. Hành vi cảnh báo của các đường chạy Gateway hợp lệ và lỗi worker vẫn giữ nguyên.
 
 Chi nhánh `INACTIVE` không nhận tác vụ lịch mới nhưng lịch sử và báo cáo vẫn tra cứu được. Gateway không chấp nhận chuyển chi nhánh sang `INACTIVE` khi còn trạng thái nghiệp vụ mở; các trạng thái đó phải được chốt hoặc hủy có lý do trước.
