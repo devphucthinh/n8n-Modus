@@ -197,3 +197,14 @@ Explicit exclusions verified: no `outputs/issue-2/`, `scripts/build-config-workb
 `gh pr list --repo devphucthinh/n8n-Modus --state all ...` failed because the configured proxy at `127.0.0.1:9` refused the connection; the public GitHub API was also inaccessible from this environment. Thus an existing Issue #4 PR could not be verified—do not infer that none exists or create one. No stage/commit/push/PR/merge, smoke, live Sheet write, n8n import/publish/activation was performed. Exact smoke target and write scope, physical Sheet headers/order/migration, and the real WF04 plus dedicated Gateway workflow IDs/native caller allowlist are still unconfirmed; imports remain blocked. The WF06/count-progress interaction gate also remains outstanding.
 
 Recommended next Git step, only after explicit approval and an available read-only PR lookup: stage the audited Issue #4 manifest in this clean candidate and no files from either the Issue #2 preservation tree or the WF03 follow-up. Stop for approval before staging; do not smoke or create a PR while the target/binding gates remain open.
+
+### GitHub delivery — 2026-09-30
+
+This section supersedes the “Recommended next Git step” above: the user subsequently authorized the full delivery sequence.
+
+- Commit: `b78a144d4c8a045225836438aa4874e7d1a8dad3` (`feat: add V2 dispatcher and inventory session workflows`), containing exactly the audited 54-path Issue #4 manifest.
+- Pushed branch: `codex/issue-4-clean-candidate` to `origin`; no force-push.
+- Pull request: [#23](https://github.com/devphucthinh/n8n-Modus/pull/23), targeting `master`, linked with `Closes #4`. It was created after a read-only exact-head/related-PR check found no duplicate. PR #20 is the closed Issue #2 Config Gateway PR and is unrelated.
+- Fresh verification before staging/commit: 6 workflows built, 6 validated, **213/213 tests passed**, 0 failed/skipped/todo. Staged manifest matched exactly; staged diff check and known credential/token/private-key scan passed. The migration workbook contained 10 sheets and no detected credential/token, email, or phone-like values.
+- Standards/Spec disposition and remaining gates are recorded in the PR body above. No merge, live Sheet write, smoke, n8n import/publish/activation occurred. Strict UTC-only HEARTBEAT timestamp validation remains deferred (P3).
+- This post-PR handoff note is recorded in a separate documentation-only follow-up commit on this branch; implementation commit `b78a144` remains unchanged. The follow-up changes no implementation, test, export, or scope.
