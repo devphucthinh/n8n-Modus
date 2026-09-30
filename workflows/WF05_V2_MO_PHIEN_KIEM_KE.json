@@ -1,0 +1,2504 @@
+{
+  "name": "WF05_V2_MO_PHIEN_KIEM_KE",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "kkb-v2-execute-workflow-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {}; const incoming = input.envelope ?? input; const eventType = incoming.event_type || 'UNKNOWN'; return [{json: { envelope: { ...incoming, event_type: eventType, payload: { ...(incoming.payload || {}), required_sheet_names: eventType === 'SCHEDULED_JOB' ? ['CONFIG_TOPIC', 'CONFIG_BIA', 'CONFIG_GLOBAL', 'CONFIG_SCHEMA', 'EVENT_LOG'] : ['CONFIG_TOPIC', 'CONFIG_SCHEMA', 'EVENT_LOG'], intent: eventType === 'SCHEDULED_JOB' ? 'START_OPERATION' : 'READ_STATUS', dispatch_key: input.dispatch_key || incoming.payload?.dispatch_key, config_snapshot_id: input.config_snapshot_id || incoming.payload?.config_snapshot_id } } }}];"
+      },
+      "id": "kkb-v2-prepare-session-gateway-request",
+      "name": "Prepare Session Gateway Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "WEL83s9bZeB3ixxF",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-call-config-gateway",
+      "name": "Call Config Gateway",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        520,
+        0
+      ],
+      "notes": "Reads the configured KIEM_KE topic and preserves the dispatcher snapshot context."
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-phien-kiem-ke",
+      "name": "Read PHIEN_KIEM_KE",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "OPERATION",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-operation-for-inventory",
+      "name": "Read OPERATION for inventory",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        910,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const CORE_SHEET_DEFINITIONS = Object.freeze({\n  CONFIG_SCHEMA: ['schema_rule_id', 'schema_version', 'sheet_name', 'column_name', 'data_type', 'required', 'unique_group', 'reference_sheet', 'reference_column', 'allowed_values', 'ordinal', 'description_vi', 'trang_thai'],\n  CONFIG_VERSION: ['config_version', 'schema_version', 'maintenance_mode', 'changed_by', 'changed_at', 'change_note', 'trang_thai'],\n  CONFIG_GLOBAL: ['config_key', 'config_value', 'value_type', 'description_vi', 'trang_thai'],\n  CONFIG_BRANCH: ['branch_id', 'branch_name', 'forum_chat_id', 'owner_chat_id', 'timezone', 'trang_thai'],\n  CONFIG_USER: ['user_id', 'display_name', 'branch_id', 'trang_thai'],\n  CONFIG_THONG_BAO: ['message_key', 'message_text', 'locale', 'trang_thai'],\n  CONFIG_SNAPSHOT: ['config_snapshot_id', 'config_version', 'schema_version', 'fingerprint', 'normalized_config_json', 'operation_id', 'status', 'created_at'],\n  OPERATION: ['operation_id', 'request_id', 'operation_type', 'idempotency_key', 'expected_row_count', 'actual_row_count', 'checksum', 'status', 'error_id', 'created_at', 'updated_at'],\n  ERROR_BIA: ['error_id', 'error_code', 'error_class', 'retryable', 'message_safe', 'workflow', 'node', 'operation_id', 'request_id', 'config_version', 'fingerprint', 'status', 'created_at', 'resolved_at'],\n});\n\nconst CORE_SHEET_NAMES = Object.freeze(Object.keys(CORE_SHEET_DEFINITIONS));\n\nconst ROUTER_SHEET_DEFINITIONS = Object.freeze({\n  CONFIG_ROLE: ['role_code', 'role_name', 'description_vi', 'trang_thai'],\n  CONFIG_PERMISSION: ['permission_code', 'permission_name', 'description_vi', 'trang_thai'],\n  CONFIG_USER_ROLE: ['user_role_id', 'user_id', 'role_code', 'branch_id', 'effective_from', 'effective_to', 'trang_thai'],\n  CONFIG_ROLE_PERMISSION: ['role_permission_id', 'role_code', 'permission_code', 'trang_thai'],\n  CONFIG_TOPIC: ['topic_id', 'branch_id', 'topic_type', 'chat_id', 'message_thread_id', 'trang_thai'],\n  CONFIG_LENH: ['command_code', 'command_text', 'syntax', 'description_vi', 'permission_code', 'topic_type', 'worker_workflow', 'example', 'ordinal', 'trang_thai'],\n});\n\nconst ROUTER_SHEET_NAMES = Object.freeze(Object.keys(ROUTER_SHEET_DEFINITIONS));\nconst AUDIT_SHEET_DEFINITIONS = Object.freeze({\n  EVENT_LOG: ['event_id', 'event_type', 'request_id', 'operation_id', 'actor_user_id', 'branch_id', 'topic_type', 'command', 'outcome', 'error_code', 'created_at', 'trang_thai'],\n});\nconst AUDIT_SHEET_NAMES = Object.freeze(Object.keys(AUDIT_SHEET_DEFINITIONS));\nconst DISPATCHER_SHEET_DEFINITIONS = Object.freeze({\n  CONFIG_LICH: ['schedule_id', 'job_code', 'branch_id', 'local_time', 'timezone', 'days_of_week', 'grace_window_minutes', 'retry_limit', 'retry_delay_minutes', 'worker_workflow', 'enabled', 'trang_thai'],\n});\nconst DISPATCHER_SHEET_NAMES = Object.freeze(Object.keys(DISPATCHER_SHEET_DEFINITIONS));\nconst INVENTORY_SHEET_DEFINITIONS = Object.freeze({\n  CONFIG_BIA: ['ma_bia', 'ten_bia', 'don_vi_dem', 'thu_tu_hien_thi', 'trang_thai'],\n});\nconst INVENTORY_SHEET_NAMES = Object.freeze(Object.keys(INVENTORY_SHEET_DEFINITIONS));\nconst OPERATIONAL_SHEET_DEFINITIONS = Object.freeze({\n  DISPATCH_HISTORY: ['dispatch_key', 'schedule_id', 'job_code', 'branch_id', 'business_date', 'scheduled_at', 'status', 'attempt_count', 'retry_delay_minutes', 'retry_limit', 'worker_workflow', 'claim_token', 'operation_id', 'request_id', 'config_snapshot_id', 'failure_count', 'last_error_code', 'retry_at', 'skip_reason', 'updated_at'],\n  HEARTBEAT: ['heartbeat_id', 'heartbeat_at', 'status', 'failure_count', 'threshold', 'critical_notified', 'notice', 'alert_chat_id', 'alert_thread_id', 'diagnostic_code', 'dispatch_key'],\n  PHIEN_KIEM_KE: ['session_id', 'branch_id', 'business_date', 'config_snapshot_id', 'topic_id', 'chat_id', 'message_thread_id', 'dispatch_key', 'catalog_snapshot_json', 'catalog_count', 'page_size', 'master_message_id', 'bubble_state', 'status', 'created_at', 'updated_at'],\n});\nconst OPERATIONAL_SHEET_NAMES = Object.freeze(Object.keys(OPERATIONAL_SHEET_DEFINITIONS));\nconst ALL_SHEET_DEFINITIONS = Object.freeze({ ...CORE_SHEET_DEFINITIONS, ...ROUTER_SHEET_DEFINITIONS, ...AUDIT_SHEET_DEFINITIONS, ...DISPATCHER_SHEET_DEFINITIONS, ...INVENTORY_SHEET_DEFINITIONS, ...OPERATIONAL_SHEET_DEFINITIONS });\nconst ALL_SHEET_NAMES = Object.freeze(Object.keys(ALL_SHEET_DEFINITIONS));\n\n\nconst LEDGER_IDENTITY_COLUMNS = Object.freeze({\n  DISPATCH_HISTORY: 'dispatch_key',\n  HEARTBEAT: 'heartbeat_id',\n  PHIEN_KIEM_KE: 'session_id',\n  OPERATION: 'operation_id',\n  EVENT_LOG: 'event_id',\n});\n\nconst INTEGER_COLUMNS = new Set([\n  'attempt_count', 'retry_delay_minutes', 'retry_limit', 'failure_count',\n  'threshold', 'catalog_count', 'page_size', 'grace_window_minutes', 'thu_tu_hien_thi',\n]);\nconst DATE_COLUMNS = new Set(['business_date']);\nconst DATETIME_COLUMNS = new Set(['scheduled_at', 'retry_at', 'heartbeat_at', 'created_at', 'updated_at']);\nconst BOOLEAN_COLUMNS = new Set(['critical_notified']);\n\nfunction expectedLedgerDataType(sheet, column) {\n  if (sheet === 'CONFIG_LICH' && column === 'enabled') return 'BOOLEAN';\n  if (INTEGER_COLUMNS.has(column)) return 'INTEGER';\n  if (DATE_COLUMNS.has(column)) return 'DATE';\n  if (DATETIME_COLUMNS.has(column)) return 'DATETIME';\n  if (BOOLEAN_COLUMNS.has(column)) return 'BOOLEAN';\n  return 'STRING';\n}\n\nfunction expectedLedgerSchemaRule(sheet, column) {\n  const identityColumn = LEDGER_IDENTITY_COLUMNS[sheet]\n    ?? ({ CONFIG_LICH: 'schedule_id', CONFIG_BIA: 'ma_bia' })[sheet];\n  return {\n    data_type: expectedLedgerDataType(sheet, column),\n    unique_group: column === identityColumn ? `${sheet}_KEY` : '',\n  };\n}\n\nfunction validateLedgerRows({ tables, requiredSheets }) {\n  for (const sheet of requiredSheets) {\n    if (!Object.hasOwn(ALL_SHEET_DEFINITIONS, sheet) || !Object.hasOwn(tables ?? {}, sheet)\n      || !Array.isArray(tables[sheet])) {\n      return { ok: false, error_code: 'CONFIG_SHEET_MISSING', sheet_name: sheet, column_name: null };\n    }\n    const columns = ALL_SHEET_DEFINITIONS[sheet];\n    // Reads have no header metadata, and n8n omits trailing empty cells.\n    // For the exported stable column order, only the observable prefix can be\n    // checked. Empty sheets and omitted suffix headers require a manual check;\n    // never fill absent keys and pretend they prove a physical header exists.\n    for (const row of tables[sheet]) {\n      const lastObserved = columns.reduce((last, column, index) => row != null && Object.hasOwn(row, column) ? index : last, 0);\n      for (const column of columns.slice(0, lastObserved + 1)) {\n        if (row == null || !Object.hasOwn(row, column)) {\n          return { ok: false, error_code: 'CONFIG_COLUMN_MISSING', sheet_name: sheet, column_name: column };\n        }\n      }\n    }\n  }\n  return { ok: true };\n}\n\nfunction validateLedgerSchema({ schemaRows, tables, requiredSheets }) {\n  const rowsValidation = validateLedgerRows({ tables, requiredSheets });\n  if (!rowsValidation.ok) return rowsValidation;\n  const declarations = new Map();\n  for (const rule of Array.isArray(schemaRows) ? schemaRows : []) {\n    if (String(rule?.trang_thai ?? '').trim().toUpperCase() !== 'ACTIVE') continue;\n    const sheet = String(rule?.sheet_name ?? '').trim();\n    if (!declarations.has(sheet)) declarations.set(sheet, new Map());\n    const column = String(rule?.column_name ?? '').trim();\n    if (!declarations.get(sheet).has(column)) declarations.get(sheet).set(column, []);\n    declarations.get(sheet).get(column).push(rule);\n  }\n  for (const sheet of requiredSheets) {\n    for (const column of ALL_SHEET_DEFINITIONS[sheet]) {\n      const rules = declarations.get(sheet)?.get(column) ?? [];\n      if (rules.length === 0) {\n        return { ok: false, error_code: 'CONFIG_SCHEMA_INCOMPLETE', sheet_name: sheet, column_name: column };\n      }\n      const expectedType = expectedLedgerDataType(sheet, column);\n      if (rules.some((rule) => String(rule?.data_type ?? '').trim().toUpperCase() !== expectedType)) {\n        return { ok: false, error_code: 'CONFIG_SCHEMA_TYPE_MISMATCH', sheet_name: sheet, column_name: column };\n      }\n    }\n    const identityColumn = LEDGER_IDENTITY_COLUMNS[sheet];\n    if (identityColumn) {\n      const expectedGroup = `${sheet}_KEY`;\n      const identityRules = declarations.get(sheet)?.get(identityColumn) ?? [];\n      const groupMembers = [...(declarations.get(sheet) ?? new Map()).entries()]\n        .flatMap(([column, rules]) => rules.filter((rule) => String(rule?.unique_group ?? '').trim() === expectedGroup).map(() => column));\n      if (identityRules.length !== 1\n        || String(identityRules[0]?.unique_group ?? '').trim() !== expectedGroup\n        || groupMembers.length !== 1\n        || groupMembers[0] !== identityColumn) {\n        return { ok: false, error_code: 'CONFIG_SCHEMA_KEY_MISMATCH', sheet_name: sheet, column_name: identityColumn };\n      }\n    }\n  }\n  return { ok: true };\n}\n\nconst asText = (value) => (value == null ? '' : String(value).trim());\nconst isCanonicalUtcIso = (value) => {\n  const text = asText(value);\n  const parsed = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/.test(text) ? Date.parse(text) : Number.NaN;\n  return Number.isFinite(parsed) && new Date(parsed).toISOString() === text;\n};\nconst active = (row) => ['ACTIVE', 'OPEN', 'IN_PROGRESS'].includes(asText(row?.status).toUpperCase());\nconst stableId = (prefix, value) => `${prefix}-${asText(value).split('').map((character) => character.charCodeAt(0).toString(16).padStart(4, '0')).join('')}`;\nconst legacySessionId = (value) => `session-${asText(value).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n\nfunction auditRow({ envelope, outcome, now }) {\n  return {\n    event_id: stableId('evt-session', envelope.payload?.dispatch_key || envelope.operation_id),\n    event_type: 'INVENTORY_SESSION_DISPATCH',\n    request_id: asText(envelope.request_id),\n    operation_id: asText(envelope.operation_id),\n    actor_user_id: asText(envelope.actor_user_id) || 'SYSTEM',\n    branch_id: asText(envelope.branch_id),\n    topic_type: 'KIEM_KE',\n    command: '/kiemke',\n    outcome,\n    error_code: '',\n    created_at: now,\n    trang_thai: 'ACTIVE',\n  };\n}\n\nfunction operationRow({ envelope, dispatchKey, operationType, expectedRowCount, now }) {\n  return {\n    operation_id: asText(envelope.operation_id),\n    request_id: asText(envelope.request_id),\n    operation_type: operationType,\n    idempotency_key: dispatchKey,\n    expected_row_count: expectedRowCount,\n    actual_row_count: '',\n    checksum: '',\n    status: 'PREPARED',\n    error_id: '',\n    created_at: now,\n    updated_at: now,\n  };\n}\n\nfunction stagedAuditRow({ envelope, outcome, now }) {\n  return { ...auditRow({ envelope, outcome, now }), trang_thai: 'PREPARED' };\n}\n\nfunction stagedSessionRow(session) {\n  return { ...session, status: 'PREPARED' };\n}\n\nfunction freezeCatalog(beers) {\n  const activeBeers = (beers ?? []).filter((row) => asText(row.trang_thai).toUpperCase() === 'ACTIVE');\n  if (activeBeers.length === 0) return { error_code: 'INVENTORY_CATALOG_EMPTY' };\n  const seen = new Set();\n  for (const beer of activeBeers) {\n    const code = asText(beer.ma_bia).toUpperCase();\n    if (!code || !asText(beer.ten_bia) || !asText(beer.don_vi_dem)\n      || !/^[1-9]\\d*$/.test(asText(beer.thu_tu_hien_thi))) {\n      return { error_code: 'INVENTORY_CATALOG_INVALID' };\n    }\n    if (seen.has(code)) return { error_code: 'INVENTORY_CATALOG_DUPLICATE' };\n    seen.add(code);\n  }\n  const ordered = [...activeBeers].sort((left, right) =>\n    Number(left.thu_tu_hien_thi) - Number(right.thu_tu_hien_thi)\n      || asText(left.ma_bia).localeCompare(asText(right.ma_bia)));\n  const snapshot = ordered.map((beer, index) => ({\n    stt: index + 1,\n    ma_bia: asText(beer.ma_bia),\n    ten_bia: asText(beer.ten_bia),\n    don_vi_dem: asText(beer.don_vi_dem),\n  }));\n  const json = JSON.stringify(snapshot);\n  if (json.length > 49000) return { error_code: 'INVENTORY_CATALOG_TOO_LARGE' };\n  return { json, count: String(snapshot.length) };\n}\n\nfunction inventoryPageSize(configGlobal) {\n  const value = asText((configGlobal ?? []).find((row) => asText(row.config_key) === 'INVENTORY_PAGE_SIZE'\n    && asText(row.trang_thai).toUpperCase() === 'ACTIVE')?.config_value);\n  return /^[1-9]\\d*$/.test(value) && Number.isSafeInteger(Number(value)) ? value : null;\n}\n\nfunction resolveInventoryTopic({ topics, branch } = {}) {\n  const branchId = asText(branch?.branch_id);\n  const topic = (topics ?? []).find((row) => asText(row.branch_id) === branchId\n    && asText(row.topic_type).toUpperCase() === 'KIEM_KE'\n    && asText(row.trang_thai).toUpperCase() === 'ACTIVE'\n    && asText(row.topic_id) && asText(row.chat_id) && asText(row.message_thread_id));\n  return topic ? { topic } : { error_code: 'INVENTORY_TOPIC_NOT_CONFIGURED' };\n}\n\nfunction commitOperationPlan({ operation, audit, session, now }) {\n  const commitPlan = [];\n  if (session) {\n    commitPlan.push({\n      sheet: 'PHIEN_KIEM_KE',\n      phase: 'COMMIT',\n      action: 'UPDATE',\n      match: { session_id: session.session_id },\n      patch: { status: 'ACTIVE', updated_at: now },\n    });\n  }\n  commitPlan.push({\n    sheet: 'EVENT_LOG',\n    phase: 'COMMIT',\n    action: 'UPDATE',\n    match: { event_id: audit.event_id },\n    patch: { trang_thai: 'COMMITTED' },\n  });\n  commitPlan.push({\n    sheet: 'OPERATION',\n    phase: 'COMMIT',\n    action: 'UPDATE',\n    match: { operation_id: operation.operation_id },\n    patch: { status: 'COMMITTED', actual_row_count: operation.expected_row_count, updated_at: now },\n  });\n  return commitPlan;\n}\n\nfunction openOrReuseInventorySession({ envelope, configSnapshotId, expectedConfigSnapshotId = null, topics = [], sessions = [], operations = [], branch = null, beers = [], configGlobal = [], now = new Date().toISOString() } = {}) {\n  if (!envelope?.request_id || !envelope?.operation_id || !envelope?.branch_id) {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_CONTEXT_INVALID', write_plan: [] };\n  }\n  const eventType = asText(envelope.event_type).toUpperCase();\n  if (!['SCHEDULED_JOB', 'TELEGRAM_UPDATE'].includes(eventType)) {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_EVENT_UNSUPPORTED', write_plan: [] };\n  }\n  if (eventType === 'SCHEDULED_JOB' && !envelope.business_date) {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_CONTEXT_INVALID', write_plan: [] };\n  }\n  if (eventType === 'SCHEDULED_JOB' && !configSnapshotId) {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_CONTEXT_INVALID', write_plan: [] };\n  }\n  if (eventType === 'TELEGRAM_UPDATE' && asText(envelope.payload?.command).toLowerCase() !== '/kiemke') {\n    return { ok: false, status: 'ERROR', error_code: 'SESSION_COMMAND_UNSUPPORTED', write_plan: [] };\n  }\n  const dispatchKey = asText(envelope.payload?.dispatch_key) || asText(envelope.payload?.idempotency_key) || asText(envelope.operation_id);\n  const matchingOperations = (operations ?? []).filter((row) => asText(row.operation_id) === asText(envelope.operation_id));\n  if (matchingOperations.length > 1) {\n    return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_RECONCILIATION_REQUIRED', write_plan: [] };\n  }\n  const claimedOperation = matchingOperations.length === 1 ? matchingOperations[0] : null;\n  const reservationStatus = asText(claimedOperation?.status).toUpperCase();\n  const reservationRowCount = asText(claimedOperation?.expected_row_count);\n  const compatibleRouterReservationState = (reservationStatus === 'RUNNING' && reservationRowCount === '')\n    || (reservationStatus === 'PREPARED' && ['1', '2'].includes(reservationRowCount));\n  const routerReservation = eventType === 'TELEGRAM_UPDATE' && claimedOperation\n    && asText(claimedOperation.operation_type) === 'ROUTE_COMMAND'\n    && compatibleRouterReservationState\n    && asText(claimedOperation.request_id) === asText(envelope.request_id)\n    && asText(claimedOperation.idempotency_key) === dispatchKey\n    && !asText(claimedOperation.actual_row_count)\n    && !asText(claimedOperation.checksum)\n    && !asText(claimedOperation.error_id)\n    && isCanonicalUtcIso(claimedOperation.created_at)\n    && isCanonicalUtcIso(claimedOperation.updated_at);\n  if (eventType === 'TELEGRAM_UPDATE' && !routerReservation) {\n    return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_RECONCILIATION_REQUIRED', write_plan: [] };\n  }\n  const branchSessions = (sessions ?? []).filter((row) => asText(row.branch_id) === asText(envelope.branch_id));\n  const activeSessions = branchSessions.filter(active);\n  if (activeSessions.length > 1) {\n    return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_RECONCILIATION_REQUIRED', write_plan: [] };\n  }\n  const prepared = branchSessions.filter((row) => asText(row.status).toUpperCase() === 'PREPARED');\n  if (branchSessions.some((row) => ['SEND_REQUESTED', 'RECONCILIATION_REQUIRED'].includes(asText(row.status).toUpperCase()))) {\n    return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_RECONCILIATION_REQUIRED', write_plan: [] };\n  }\n  if (prepared.length > 0) {\n    const staged = prepared[0];\n    const operation = claimedOperation;\n    let catalog = null;\n    try { catalog = JSON.parse(asText(staged.catalog_snapshot_json)); } catch { /* A broken frozen catalog cannot be replayed. */ }\n    const recoverable = eventType === 'SCHEDULED_JOB' && prepared.length === 1 && !branchSessions.some(active)\n      && [stableId('session', dispatchKey), legacySessionId(dispatchKey)].includes(asText(staged.session_id))\n      && (sessions ?? []).filter((row) => asText(row.session_id) === asText(staged.session_id)).length === 1\n      && asText(staged.dispatch_key) === dispatchKey\n      && asText(staged.business_date) === asText(envelope.business_date)\n      && asText(expectedConfigSnapshotId)\n      && asText(staged.config_snapshot_id) === asText(expectedConfigSnapshotId)\n      && asText(staged.topic_id) && asText(staged.chat_id) && asText(staged.message_thread_id)\n      && Array.isArray(catalog) && catalog.length > 0 && String(catalog.length) === asText(staged.catalog_count)\n      && /^[1-9]\\d*$/.test(asText(staged.page_size))\n      && asText(staged.bubble_state).toUpperCase() === 'NONE' && !asText(staged.master_message_id)\n      && asText(staged.created_at) && operation\n      && asText(operation.operation_type) === 'OPEN_INVENTORY_SESSION'\n      && asText(operation.idempotency_key) === dispatchKey\n      && asText(operation.status).toUpperCase() === 'PREPARED'\n      && asText(operation.expected_row_count) === '3' && asText(operation.created_at);\n    if (!recoverable) {\n      return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_RECONCILIATION_REQUIRED', write_plan: [] };\n    }\n    const session = { ...staged, status: 'ACTIVE', updated_at: now };\n    const audit = stagedAuditRow({ envelope, outcome: 'OPENED', now });\n    if (asText(staged.session_id) === legacySessionId(dispatchKey)) {\n      audit.event_id = `evt-session-${asText(dispatchKey).replace(/[^A-Za-z0-9_-]/g, '_')}`;\n    }\n    return {\n      ok: true,\n      status: 'OPENED',\n      session,\n      operation: { ...operation },\n      write_plan: [\n        { sheet: 'OPERATION', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { operation_id: operation.operation_id }, row: { ...operation } },\n        { sheet: 'PHIEN_KIEM_KE', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { session_id: session.session_id }, row: stagedSessionRow(session) },\n        { sheet: 'EVENT_LOG', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { event_id: audit.event_id }, row: audit },\n      ],\n      topic_write_plan: [],\n      commit_plan: commitOperationPlan({ operation, audit, session, now }),\n    };\n  }\n  const existing = activeSessions[0] ?? null;\n  if (existing) {\n    const committedOpen = (operations ?? []).find((row) =>\n      asText(row.idempotency_key) === asText(existing.dispatch_key)\n      && asText(row.operation_type) === 'OPEN_INVENTORY_SESSION'\n      && asText(row.status).toUpperCase() === 'COMMITTED');\n    if (!asText(existing.session_id) || !asText(existing.config_snapshot_id)\n      || !/^[1-9]\\d*$/.test(asText(existing.master_message_id))\n      || asText(existing.bubble_state).toUpperCase() !== 'SENT' || !committedOpen) {\n      return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_RECONCILIATION_REQUIRED', write_plan: [] };\n    }\n    const repeatedScheduledOpen = eventType === 'SCHEDULED_JOB' && dispatchKey === asText(existing.dispatch_key);\n    if (claimedOperation && !(repeatedScheduledOpen && claimedOperation === committedOpen) && !routerReservation) {\n      return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_RECONCILIATION_REQUIRED', write_plan: [] };\n    }\n    if (repeatedScheduledOpen) {\n      return {\n        ok: true, status: 'REUSED', session: { ...existing }, operation: { ...committedOpen },\n        write_plan: [], commit_plan: [],\n      };\n    }\n    const operation = routerReservation\n      ? { ...claimedOperation, expected_row_count: '2', updated_at: now }\n      : operationRow({ envelope, dispatchKey, operationType: 'REUSE_INVENTORY_SESSION', expectedRowCount: 2, now });\n    const audit = stagedAuditRow({ envelope, outcome: 'REUSED_ACTIVE_SESSION', now });\n    return {\n      ok: true,\n      status: 'REUSED',\n      reply_handled: eventType === 'TELEGRAM_UPDATE',\n      session: { ...existing },\n      operation,\n      write_plan: [\n        { sheet: 'OPERATION', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { operation_id: operation.operation_id }, row: operation },\n        { sheet: 'EVENT_LOG', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { event_id: audit.event_id }, row: audit },\n      ],\n      commit_plan: commitOperationPlan({ operation, audit, now }),\n    };\n  }\n  if (eventType === 'TELEGRAM_UPDATE') {\n    return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_NOT_OPEN', write_plan: [] };\n  }\n  if ((operations ?? []).some((row) => asText(row.operation_id) === asText(envelope.operation_id))) {\n    return { ok: false, status: 'ERROR', error_code: 'INVENTORY_SESSION_RECONCILIATION_REQUIRED', write_plan: [] };\n  }\n  if (expectedConfigSnapshotId && asText(expectedConfigSnapshotId) !== asText(configSnapshotId)) {\n    return { ok: false, status: 'ERROR', error_code: 'INVENTORY_CONFIG_SNAPSHOT_MISMATCH', write_plan: [] };\n  }\n  const topicResult = resolveInventoryTopic({ topics, branch: branch || { branch_id: envelope.branch_id } });\n  if (!topicResult.topic) return { ok: false, status: 'ERROR', error_code: topicResult.error_code || 'INVENTORY_TOPIC_NOT_CONFIGURED', write_plan: [] };\n  const catalog = freezeCatalog(beers);\n  if (catalog.error_code) return { ok: false, status: 'ERROR', error_code: catalog.error_code, write_plan: [] };\n  const pageSize = inventoryPageSize(configGlobal);\n  if (!pageSize) return { ok: false, status: 'ERROR', error_code: 'INVENTORY_PAGE_SIZE_INVALID', write_plan: [] };\n  const topic = topicResult.topic;\n  const sessionId = stableId('session', dispatchKey);\n  const session = {\n    session_id: sessionId,\n    branch_id: asText(envelope.branch_id),\n    business_date: asText(envelope.business_date),\n    config_snapshot_id: asText(configSnapshotId),\n    topic_id: asText(topic.topic_id),\n    chat_id: asText(topic.chat_id),\n    message_thread_id: asText(topic.message_thread_id),\n    dispatch_key: dispatchKey,\n    catalog_snapshot_json: catalog.json,\n    catalog_count: catalog.count,\n    page_size: pageSize,\n    master_message_id: '',\n    bubble_state: 'NONE',\n    status: 'ACTIVE',\n    created_at: now,\n    updated_at: now,\n  };\n  const expectedRowCount = 3;\n  const operation = operationRow({ envelope, dispatchKey, operationType: 'OPEN_INVENTORY_SESSION', expectedRowCount, now });\n  const audit = stagedAuditRow({ envelope, outcome: 'OPENED', now });\n  return {\n    ok: true,\n    status: 'OPENED',\n    session,\n    operation,\n    write_plan: [\n      { sheet: 'OPERATION', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { operation_id: operation.operation_id }, row: operation },\n      { sheet: 'PHIEN_KIEM_KE', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { session_id: sessionId }, row: stagedSessionRow(session) },\n      { sheet: 'EVENT_LOG', phase: 'PREPARE', action: 'APPEND_OR_UPDATE', match: { event_id: audit.event_id }, row: audit },\n    ],\n    topic_write_plan: [],\n    commit_plan: commitOperationPlan({ operation, audit, session, now }),\n  };\n}\n\nconst trigger = $('Execute Workflow Trigger').first()?.json ?? {};\nconst gateway = $('Call Config Gateway').first()?.json ?? {};\nconst envelope = trigger.envelope ?? trigger;\nconst topics = gateway.response?.data?.config_tables?.CONFIG_TOPIC ?? [];\nconst branch = (gateway.response?.data?.config_tables?.CONFIG_BRANCH ?? []).find((row) => String(row.branch_id || '').trim() === String(envelope.branch_id || '').trim()) || { branch_id: envelope.branch_id };\nconst configGlobal = gateway.response?.data?.config_tables?.CONFIG_GLOBAL ?? [];\nconst beers = gateway.response?.data?.config_tables?.CONFIG_BIA ?? [];\nconst snapshotId = gateway.response?.config_snapshot_id || null;\nconst expectedConfigSnapshotId = envelope.payload?.config_snapshot_id || trigger.config_snapshot_id || null;\nconst rows = (() => { try { return $items('Read PHIEN_KIEM_KE').map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); } catch { return null; } })();\nconst operations = (() => { try { return $items('Read OPERATION for inventory').map((item) => item.json).filter((row) => row && Object.keys(row).length > 0); } catch { return null; } })();\nif (gateway.ok !== true || (envelope.event_type === 'SCHEDULED_JOB' && !expectedConfigSnapshotId)) {\n  return [{ json: { ok: false, status: 'ERROR', error_code: 'INVENTORY_CONFIG_GATEWAY_UNAVAILABLE', write_plan: [] } }];\n}\nconst validation = validateLedgerSchema({\n  schemaRows: gateway.response?.data?.config_tables?.CONFIG_SCHEMA,\n  tables: { PHIEN_KIEM_KE: rows, OPERATION: operations, EVENT_LOG: gateway.response?.data?.config_tables?.EVENT_LOG },\n  requiredSheets: ['PHIEN_KIEM_KE', 'OPERATION', 'EVENT_LOG'],\n});\nif (!validation.ok) return [{ json: { status: 'ERROR', ...validation, write_plan: [] } }];\nconst result = openOrReuseInventorySession({ envelope, configSnapshotId: snapshotId, expectedConfigSnapshotId, topics, sessions: rows, operations, branch, beers, configGlobal, now: new Date().toISOString() });\nreturn [{ json: result }];"
+      },
+      "id": "kkb-v2-open-or-reuse-inventory-session",
+      "name": "Open or Reuse Inventory Session",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();"
+      },
+      "id": "kkb-v2-select-session-result",
+      "name": "Select Session Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{($json.write_plan?.length ?? 0) > 0}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-session-write-required-",
+      "name": "Session write required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'OPERATION' && item.phase === 'PREPARE'); return entry?.row ? [{json: entry.row}] : [];"
+      },
+      "id": "kkb-v2-prepare-operation-row",
+      "name": "Prepare OPERATION row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "OPERATION",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "operation_id"
+          ],
+          "schema": [
+            {
+              "id": "operation_id",
+              "displayName": "operation_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "request_id",
+              "displayName": "request_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "operation_type",
+              "displayName": "operation_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "idempotency_key",
+              "displayName": "idempotency_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "expected_row_count",
+              "displayName": "expected_row_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "actual_row_count",
+              "displayName": "actual_row_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "checksum",
+              "displayName": "checksum",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_id",
+              "displayName": "error_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-prepare-operation",
+      "name": "Prepare OPERATION",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1820,
+        -240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{!!($('Select Session Result').first()?.json?.write_plan ?? []).some((entry) => entry.sheet === 'PHIEN_KIEM_KE' && entry.phase === 'PREPARE')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-new-session-row-required-",
+      "name": "New session row required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2080,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'PHIEN_KIEM_KE' && item.phase === 'PREPARE'); return entry?.row ? [{json: entry.row}] : [];"
+      },
+      "id": "kkb-v2-prepare-phien-kiem-ke-row",
+      "name": "Prepare PHIEN_KIEM_KE row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "session_id"
+          ],
+          "schema": [
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "branch_id",
+              "displayName": "branch_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "business_date",
+              "displayName": "business_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "config_snapshot_id",
+              "displayName": "config_snapshot_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "topic_id",
+              "displayName": "topic_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_thread_id",
+              "displayName": "message_thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dispatch_key",
+              "displayName": "dispatch_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "catalog_snapshot_json",
+              "displayName": "catalog_snapshot_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "catalog_count",
+              "displayName": "catalog_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "page_size",
+              "displayName": "page_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "master_message_id",
+              "displayName": "master_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bubble_state",
+              "displayName": "bubble_state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-prepare-phien-kiem-ke",
+      "name": "Prepare PHIEN_KIEM_KE",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2600,
+        -360
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.write_plan || []).find((item) => item.sheet === 'EVENT_LOG' && item.phase === 'PREPARE'); return entry?.row ? [{json: entry.row}] : [];"
+      },
+      "id": "kkb-v2-prepare-event-log-row",
+      "name": "Prepare EVENT_LOG row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "EVENT_LOG",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "event_id"
+          ],
+          "schema": [
+            {
+              "id": "event_id",
+              "displayName": "event_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "request_id",
+              "displayName": "request_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "operation_id",
+              "displayName": "operation_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "actor_user_id",
+              "displayName": "actor_user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "branch_id",
+              "displayName": "branch_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "topic_type",
+              "displayName": "topic_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "command",
+              "displayName": "command",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "outcome",
+              "displayName": "outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_code",
+              "displayName": "error_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "trang_thai",
+              "displayName": "trang_thai",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-prepare-event-log",
+      "name": "Prepare EVENT_LOG",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2600,
+        -100
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$('Select Session Result').first()?.json?.status === 'OPENED'}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-bubble-action-",
+      "name": "Bubble action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2860,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst validMessageId = (value) => /^[1-9]\\d*$/.test(asText(value));\n\nfunction planBubbleAction(session = {}) {\n  const messageId = asText(session.master_message_id);\n  const status = asText(session.status).toUpperCase();\n  const state = asText(session.bubble_state).toUpperCase() || 'NONE';\n  if (status === 'ACTIVE' && validMessageId(messageId) && state === 'SENT') {\n    return { action: 'EDIT', message_id: messageId };\n  }\n  if (status === 'PREPARED' && state === 'NONE' && !messageId) {\n    return { action: 'MARK_SEND_REQUESTED' };\n  }\n  return { action: 'RECONCILE', error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED' };\n}\n\nfunction markSendRequested(session, now = new Date().toISOString()) {\n  if (planBubbleAction(session).action !== 'MARK_SEND_REQUESTED') {\n    throw new Error('INVENTORY_SEND_NOT_SAFE');\n  }\n  return { ...session, status: 'SEND_REQUESTED', bubble_state: 'SEND_REQUESTED', updated_at: now };\n}\n\nfunction observeTelegramSend(session, response, now = new Date().toISOString()) {\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const messageId = message?.message_id;\n  const sameChat = asText(message?.chat?.id) === asText(session?.chat_id);\n  const sameThread = asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  if (!response?.error && response?.ok !== false && asText(session?.status) === 'SEND_REQUESTED'\n    && validMessageId(messageId) && sameChat && sameThread) {\n    return {\n      ok: true,\n      can_commit: true,\n      patch: {\n        session_id: asText(session.session_id), dispatch_key: asText(session.dispatch_key),\n        master_message_id: asText(messageId), bubble_state: 'SENT', status: 'PREPARED', updated_at: now,\n      },\n    };\n  }\n  return {\n    ok: false,\n    can_commit: false,\n    error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED',\n    patch: {\n      session_id: asText(session?.session_id), dispatch_key: asText(session?.dispatch_key),\n      master_message_id: asText(session?.master_message_id),\n      bubble_state: 'RECONCILIATION_REQUIRED', status: 'RECONCILIATION_REQUIRED', updated_at: now,\n    },\n  };\n}\n\nfunction recordPinOutcome(session, response) {\n  const pinned = !response?.error && response?.ok !== false && (response === true || response?.result === true);\n  return {\n    pinned,\n    warning_code: pinned ? '' : 'INVENTORY_PIN_FAILED',\n    session: { ...session },\n  };\n}\n\nfunction observeTelegramEdit(session, response) {\n  const knownBubble = planBubbleAction(session).action === 'EDIT'\n    && asText(session?.chat_id) && asText(session?.message_thread_id);\n  const errorText = asText(response?.error?.description || response?.error?.message || response?.error || response?.description);\n  const unchanged = /^(?:Bad Request: )?message is not modified(?:: specified new message content and reply markup are exactly the same as a current content and reply markup of the message)?$/i.test(errorText);\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const sameMessage = !response?.error && response?.ok !== false\n    && asText(message?.message_id) === asText(session?.master_message_id)\n    && asText(message?.chat?.id) === asText(session?.chat_id)\n    && asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  return {\n    edit_ok: Boolean(knownBubble && (unchanged || sameMessage)),\n    session_id: asText(session?.session_id),\n    master_message_id: asText(session?.master_message_id),\n  };\n}\n\nconst escapeHtml = (value) => asText(value)\n  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\"', '&quot;');\n\nfunction renderInventoryBubble(session, { page = 1 } = {}) {\n  let catalog;\n  try { catalog = JSON.parse(asText(session?.catalog_snapshot_json)); } catch { catalog = null; }\n  const pageSize = Number(session?.page_size);\n  if (!Array.isArray(catalog) || catalog.length === 0 || !Number.isSafeInteger(pageSize) || pageSize <= 0) {\n    throw new Error('INVENTORY_BUBBLE_CONTEXT_INVALID');\n  }\n  const pageCount = Math.ceil(catalog.length / pageSize);\n  if (!Number.isSafeInteger(page) || page < 1 || page > pageCount) throw new Error('INVENTORY_PAGE_INVALID');\n  const rows = catalog.slice((page - 1) * pageSize, page * pageSize);\n  const opening = !asText(session?.master_message_id)\n    && ['PREPARED', 'SEND_REQUESTED'].includes(asText(session?.status).toUpperCase())\n    && ['NONE', 'SEND_REQUESTED'].includes(asText(session?.bubble_state).toUpperCase());\n  const progress = { known: opening, counted: opening ? 0 : null, total: catalog.length };\n  const text = [\n    `Kiểm kê bia — ${escapeHtml(session.branch_id)} — ${escapeHtml(session.business_date)}`,\n    `Trang ${page}/${pageCount}`,\n    opening ? `Đã đếm: 0/${catalog.length}` : 'Tiến độ chưa được tải.',\n    ...rows.map((beer) => `${beer.stt}. ${escapeHtml(beer.ma_bia)} — ${escapeHtml(beer.ten_bia)} (${escapeHtml(beer.don_vi_dem)}) — ${opening ? 'chưa đếm' : 'chưa tải số'}`),\n  ].join('\\n');\n  if (text.length > 4000) throw new Error('INVENTORY_BUBBLE_TOO_LONG');\n  return { text, page, page_count: pageCount, rows, progress };\n}\n\nconst planned = $('Select Session Result').first()?.json ?? {}; const marked = markSendRequested({ ...planned.session, status: 'PREPARED' }); return [{ json: { session_id: marked.session_id, dispatch_key: marked.dispatch_key, status: marked.status, bubble_state: marked.bubble_state, updated_at: marked.updated_at } }];"
+      },
+      "id": "kkb-v2-mark-bubble-send-requested-row",
+      "name": "Mark bubble SEND_REQUESTED row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "session_id": "={{$json.session_id}}",
+            "dispatch_key": "={{$json.dispatch_key}}",
+            "status": "={{$json.status}}",
+            "bubble_state": "={{$json.bubble_state}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "session_id"
+          ],
+          "schema": [
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dispatch_key",
+              "displayName": "dispatch_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bubble_state",
+              "displayName": "bubble_state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-mark-bubble-send-requested",
+      "name": "Mark bubble SEND_REQUESTED",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3380,
+        -360
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-bubble-marker",
+      "name": "Read bubble marker",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3640,
+        -360
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const expected = $('Select Session Result').first()?.json?.session ?? {}; const rows = $items('Read bubble marker').map((item) => item.json).filter((row) => String(row.session_id || '') === String(expected.session_id || '')); const row = rows.length === 1 ? rows[0] : {}; const safe = !!expected.session_id && row.status === 'SEND_REQUESTED' && row.bubble_state === 'SEND_REQUESTED' && String(row.dispatch_key || '') === String(expected.dispatch_key || '') && !String(row.master_message_id || '').trim(); return [{json: {...row, safe_to_send: safe}}];"
+      },
+      "id": "kkb-v2-verify-bubble-marker",
+      "name": "Verify bubble marker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3900,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.safe_to_send === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-safe-to-send-bubble-",
+      "name": "Safe to send bubble?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4160,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst validMessageId = (value) => /^[1-9]\\d*$/.test(asText(value));\n\nfunction planBubbleAction(session = {}) {\n  const messageId = asText(session.master_message_id);\n  const status = asText(session.status).toUpperCase();\n  const state = asText(session.bubble_state).toUpperCase() || 'NONE';\n  if (status === 'ACTIVE' && validMessageId(messageId) && state === 'SENT') {\n    return { action: 'EDIT', message_id: messageId };\n  }\n  if (status === 'PREPARED' && state === 'NONE' && !messageId) {\n    return { action: 'MARK_SEND_REQUESTED' };\n  }\n  return { action: 'RECONCILE', error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED' };\n}\n\nfunction markSendRequested(session, now = new Date().toISOString()) {\n  if (planBubbleAction(session).action !== 'MARK_SEND_REQUESTED') {\n    throw new Error('INVENTORY_SEND_NOT_SAFE');\n  }\n  return { ...session, status: 'SEND_REQUESTED', bubble_state: 'SEND_REQUESTED', updated_at: now };\n}\n\nfunction observeTelegramSend(session, response, now = new Date().toISOString()) {\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const messageId = message?.message_id;\n  const sameChat = asText(message?.chat?.id) === asText(session?.chat_id);\n  const sameThread = asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  if (!response?.error && response?.ok !== false && asText(session?.status) === 'SEND_REQUESTED'\n    && validMessageId(messageId) && sameChat && sameThread) {\n    return {\n      ok: true,\n      can_commit: true,\n      patch: {\n        session_id: asText(session.session_id), dispatch_key: asText(session.dispatch_key),\n        master_message_id: asText(messageId), bubble_state: 'SENT', status: 'PREPARED', updated_at: now,\n      },\n    };\n  }\n  return {\n    ok: false,\n    can_commit: false,\n    error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED',\n    patch: {\n      session_id: asText(session?.session_id), dispatch_key: asText(session?.dispatch_key),\n      master_message_id: asText(session?.master_message_id),\n      bubble_state: 'RECONCILIATION_REQUIRED', status: 'RECONCILIATION_REQUIRED', updated_at: now,\n    },\n  };\n}\n\nfunction recordPinOutcome(session, response) {\n  const pinned = !response?.error && response?.ok !== false && (response === true || response?.result === true);\n  return {\n    pinned,\n    warning_code: pinned ? '' : 'INVENTORY_PIN_FAILED',\n    session: { ...session },\n  };\n}\n\nfunction observeTelegramEdit(session, response) {\n  const knownBubble = planBubbleAction(session).action === 'EDIT'\n    && asText(session?.chat_id) && asText(session?.message_thread_id);\n  const errorText = asText(response?.error?.description || response?.error?.message || response?.error || response?.description);\n  const unchanged = /^(?:Bad Request: )?message is not modified(?:: specified new message content and reply markup are exactly the same as a current content and reply markup of the message)?$/i.test(errorText);\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const sameMessage = !response?.error && response?.ok !== false\n    && asText(message?.message_id) === asText(session?.master_message_id)\n    && asText(message?.chat?.id) === asText(session?.chat_id)\n    && asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  return {\n    edit_ok: Boolean(knownBubble && (unchanged || sameMessage)),\n    session_id: asText(session?.session_id),\n    master_message_id: asText(session?.master_message_id),\n  };\n}\n\nconst escapeHtml = (value) => asText(value)\n  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\"', '&quot;');\n\nfunction renderInventoryBubble(session, { page = 1 } = {}) {\n  let catalog;\n  try { catalog = JSON.parse(asText(session?.catalog_snapshot_json)); } catch { catalog = null; }\n  const pageSize = Number(session?.page_size);\n  if (!Array.isArray(catalog) || catalog.length === 0 || !Number.isSafeInteger(pageSize) || pageSize <= 0) {\n    throw new Error('INVENTORY_BUBBLE_CONTEXT_INVALID');\n  }\n  const pageCount = Math.ceil(catalog.length / pageSize);\n  if (!Number.isSafeInteger(page) || page < 1 || page > pageCount) throw new Error('INVENTORY_PAGE_INVALID');\n  const rows = catalog.slice((page - 1) * pageSize, page * pageSize);\n  const opening = !asText(session?.master_message_id)\n    && ['PREPARED', 'SEND_REQUESTED'].includes(asText(session?.status).toUpperCase())\n    && ['NONE', 'SEND_REQUESTED'].includes(asText(session?.bubble_state).toUpperCase());\n  const progress = { known: opening, counted: opening ? 0 : null, total: catalog.length };\n  const text = [\n    `Kiểm kê bia — ${escapeHtml(session.branch_id)} — ${escapeHtml(session.business_date)}`,\n    `Trang ${page}/${pageCount}`,\n    opening ? `Đã đếm: 0/${catalog.length}` : 'Tiến độ chưa được tải.',\n    ...rows.map((beer) => `${beer.stt}. ${escapeHtml(beer.ma_bia)} — ${escapeHtml(beer.ten_bia)} (${escapeHtml(beer.don_vi_dem)}) — ${opening ? 'chưa đếm' : 'chưa tải số'}`),\n  ].join('\\n');\n  if (text.length > 4000) throw new Error('INVENTORY_BUBBLE_TOO_LONG');\n  return { text, page, page_count: pageCount, rows, progress };\n}\n\nconst row = $input.first()?.json ?? {}; if (row.safe_to_send !== true) throw new Error('INVENTORY_SEND_NOT_SAFE'); const rendered = renderInventoryBubble(row, { page: 1 }); return [{ json: { ...row, text: rendered.text } }];"
+      },
+      "id": "kkb-v2-prepare-inventory-bubble-send",
+      "name": "Prepare Inventory Bubble Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4420,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$json.chat_id}}",
+        "text": "={{$json.text}}",
+        "additionalFields": {
+          "message_thread_id": "={{$json.message_thread_id}}",
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "kkb-v2-send-inventory-bubble",
+      "name": "Send Inventory Bubble",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4680,
+        -480
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "TELEGRAM_KKB_V2"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst validMessageId = (value) => /^[1-9]\\d*$/.test(asText(value));\n\nfunction planBubbleAction(session = {}) {\n  const messageId = asText(session.master_message_id);\n  const status = asText(session.status).toUpperCase();\n  const state = asText(session.bubble_state).toUpperCase() || 'NONE';\n  if (status === 'ACTIVE' && validMessageId(messageId) && state === 'SENT') {\n    return { action: 'EDIT', message_id: messageId };\n  }\n  if (status === 'PREPARED' && state === 'NONE' && !messageId) {\n    return { action: 'MARK_SEND_REQUESTED' };\n  }\n  return { action: 'RECONCILE', error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED' };\n}\n\nfunction markSendRequested(session, now = new Date().toISOString()) {\n  if (planBubbleAction(session).action !== 'MARK_SEND_REQUESTED') {\n    throw new Error('INVENTORY_SEND_NOT_SAFE');\n  }\n  return { ...session, status: 'SEND_REQUESTED', bubble_state: 'SEND_REQUESTED', updated_at: now };\n}\n\nfunction observeTelegramSend(session, response, now = new Date().toISOString()) {\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const messageId = message?.message_id;\n  const sameChat = asText(message?.chat?.id) === asText(session?.chat_id);\n  const sameThread = asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  if (!response?.error && response?.ok !== false && asText(session?.status) === 'SEND_REQUESTED'\n    && validMessageId(messageId) && sameChat && sameThread) {\n    return {\n      ok: true,\n      can_commit: true,\n      patch: {\n        session_id: asText(session.session_id), dispatch_key: asText(session.dispatch_key),\n        master_message_id: asText(messageId), bubble_state: 'SENT', status: 'PREPARED', updated_at: now,\n      },\n    };\n  }\n  return {\n    ok: false,\n    can_commit: false,\n    error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED',\n    patch: {\n      session_id: asText(session?.session_id), dispatch_key: asText(session?.dispatch_key),\n      master_message_id: asText(session?.master_message_id),\n      bubble_state: 'RECONCILIATION_REQUIRED', status: 'RECONCILIATION_REQUIRED', updated_at: now,\n    },\n  };\n}\n\nfunction recordPinOutcome(session, response) {\n  const pinned = !response?.error && response?.ok !== false && (response === true || response?.result === true);\n  return {\n    pinned,\n    warning_code: pinned ? '' : 'INVENTORY_PIN_FAILED',\n    session: { ...session },\n  };\n}\n\nfunction observeTelegramEdit(session, response) {\n  const knownBubble = planBubbleAction(session).action === 'EDIT'\n    && asText(session?.chat_id) && asText(session?.message_thread_id);\n  const errorText = asText(response?.error?.description || response?.error?.message || response?.error || response?.description);\n  const unchanged = /^(?:Bad Request: )?message is not modified(?:: specified new message content and reply markup are exactly the same as a current content and reply markup of the message)?$/i.test(errorText);\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const sameMessage = !response?.error && response?.ok !== false\n    && asText(message?.message_id) === asText(session?.master_message_id)\n    && asText(message?.chat?.id) === asText(session?.chat_id)\n    && asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  return {\n    edit_ok: Boolean(knownBubble && (unchanged || sameMessage)),\n    session_id: asText(session?.session_id),\n    master_message_id: asText(session?.master_message_id),\n  };\n}\n\nconst escapeHtml = (value) => asText(value)\n  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\"', '&quot;');\n\nfunction renderInventoryBubble(session, { page = 1 } = {}) {\n  let catalog;\n  try { catalog = JSON.parse(asText(session?.catalog_snapshot_json)); } catch { catalog = null; }\n  const pageSize = Number(session?.page_size);\n  if (!Array.isArray(catalog) || catalog.length === 0 || !Number.isSafeInteger(pageSize) || pageSize <= 0) {\n    throw new Error('INVENTORY_BUBBLE_CONTEXT_INVALID');\n  }\n  const pageCount = Math.ceil(catalog.length / pageSize);\n  if (!Number.isSafeInteger(page) || page < 1 || page > pageCount) throw new Error('INVENTORY_PAGE_INVALID');\n  const rows = catalog.slice((page - 1) * pageSize, page * pageSize);\n  const opening = !asText(session?.master_message_id)\n    && ['PREPARED', 'SEND_REQUESTED'].includes(asText(session?.status).toUpperCase())\n    && ['NONE', 'SEND_REQUESTED'].includes(asText(session?.bubble_state).toUpperCase());\n  const progress = { known: opening, counted: opening ? 0 : null, total: catalog.length };\n  const text = [\n    `Kiểm kê bia — ${escapeHtml(session.branch_id)} — ${escapeHtml(session.business_date)}`,\n    `Trang ${page}/${pageCount}`,\n    opening ? `Đã đếm: 0/${catalog.length}` : 'Tiến độ chưa được tải.',\n    ...rows.map((beer) => `${beer.stt}. ${escapeHtml(beer.ma_bia)} — ${escapeHtml(beer.ten_bia)} (${escapeHtml(beer.don_vi_dem)}) — ${opening ? 'chưa đếm' : 'chưa tải số'}`),\n  ].join('\\n');\n  if (text.length > 4000) throw new Error('INVENTORY_BUBBLE_TOO_LONG');\n  return { text, page, page_count: pageCount, rows, progress };\n}\n\nconst marker = $('Verify bubble marker').first()?.json ?? {}; const response = $input.first()?.json ?? {}; const outcome = observeTelegramSend(marker, response); return [{json: {...outcome.patch, can_commit: outcome.can_commit, error_code: outcome.error_code || ''}}];"
+      },
+      "id": "kkb-v2-observe-bubble-send",
+      "name": "Observe bubble send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4940,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "session_id": "={{$json.session_id}}",
+            "dispatch_key": "={{$json.dispatch_key}}",
+            "master_message_id": "={{$json.master_message_id}}",
+            "bubble_state": "={{$json.bubble_state}}",
+            "status": "={{$json.status}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "session_id"
+          ],
+          "schema": [
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dispatch_key",
+              "displayName": "dispatch_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "master_message_id",
+              "displayName": "master_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bubble_state",
+              "displayName": "bubble_state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-save-bubble-outcome",
+      "name": "Save bubble outcome",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        5200,
+        -480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-saved-bubble",
+      "name": "Read saved bubble",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        5460,
+        -480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const expected = $('Observe bubble send').first()?.json ?? {}; const rows = $items('Read saved bubble').map((item) => item.json).filter((row) => String(row.session_id || '') === String(expected.session_id || '')); const row = rows.length === 1 ? rows[0] : {}; const ready = expected.can_commit === true && /^[1-9]\\d*$/.test(String(expected.master_message_id || '')) && String(row.master_message_id || '') === String(expected.master_message_id) && row.bubble_state === 'SENT' && row.status === 'PREPARED' && String(row.dispatch_key || '') === String(expected.dispatch_key || ''); return [{json: {...row, ready}}];"
+      },
+      "id": "kkb-v2-confirm-bubble-identity",
+      "name": "Confirm bubble identity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5720,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.ready === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-bubble-ready-to-commit-",
+      "name": "Bubble ready to commit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5980,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst validMessageId = (value) => /^[1-9]\\d*$/.test(asText(value));\n\nfunction planBubbleAction(session = {}) {\n  const messageId = asText(session.master_message_id);\n  const status = asText(session.status).toUpperCase();\n  const state = asText(session.bubble_state).toUpperCase() || 'NONE';\n  if (status === 'ACTIVE' && validMessageId(messageId) && state === 'SENT') {\n    return { action: 'EDIT', message_id: messageId };\n  }\n  if (status === 'PREPARED' && state === 'NONE' && !messageId) {\n    return { action: 'MARK_SEND_REQUESTED' };\n  }\n  return { action: 'RECONCILE', error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED' };\n}\n\nfunction markSendRequested(session, now = new Date().toISOString()) {\n  if (planBubbleAction(session).action !== 'MARK_SEND_REQUESTED') {\n    throw new Error('INVENTORY_SEND_NOT_SAFE');\n  }\n  return { ...session, status: 'SEND_REQUESTED', bubble_state: 'SEND_REQUESTED', updated_at: now };\n}\n\nfunction observeTelegramSend(session, response, now = new Date().toISOString()) {\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const messageId = message?.message_id;\n  const sameChat = asText(message?.chat?.id) === asText(session?.chat_id);\n  const sameThread = asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  if (!response?.error && response?.ok !== false && asText(session?.status) === 'SEND_REQUESTED'\n    && validMessageId(messageId) && sameChat && sameThread) {\n    return {\n      ok: true,\n      can_commit: true,\n      patch: {\n        session_id: asText(session.session_id), dispatch_key: asText(session.dispatch_key),\n        master_message_id: asText(messageId), bubble_state: 'SENT', status: 'PREPARED', updated_at: now,\n      },\n    };\n  }\n  return {\n    ok: false,\n    can_commit: false,\n    error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED',\n    patch: {\n      session_id: asText(session?.session_id), dispatch_key: asText(session?.dispatch_key),\n      master_message_id: asText(session?.master_message_id),\n      bubble_state: 'RECONCILIATION_REQUIRED', status: 'RECONCILIATION_REQUIRED', updated_at: now,\n    },\n  };\n}\n\nfunction recordPinOutcome(session, response) {\n  const pinned = !response?.error && response?.ok !== false && (response === true || response?.result === true);\n  return {\n    pinned,\n    warning_code: pinned ? '' : 'INVENTORY_PIN_FAILED',\n    session: { ...session },\n  };\n}\n\nfunction observeTelegramEdit(session, response) {\n  const knownBubble = planBubbleAction(session).action === 'EDIT'\n    && asText(session?.chat_id) && asText(session?.message_thread_id);\n  const errorText = asText(response?.error?.description || response?.error?.message || response?.error || response?.description);\n  const unchanged = /^(?:Bad Request: )?message is not modified(?:: specified new message content and reply markup are exactly the same as a current content and reply markup of the message)?$/i.test(errorText);\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const sameMessage = !response?.error && response?.ok !== false\n    && asText(message?.message_id) === asText(session?.master_message_id)\n    && asText(message?.chat?.id) === asText(session?.chat_id)\n    && asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  return {\n    edit_ok: Boolean(knownBubble && (unchanged || sameMessage)),\n    session_id: asText(session?.session_id),\n    master_message_id: asText(session?.master_message_id),\n  };\n}\n\nconst escapeHtml = (value) => asText(value)\n  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\"', '&quot;');\n\nfunction renderInventoryBubble(session, { page = 1 } = {}) {\n  let catalog;\n  try { catalog = JSON.parse(asText(session?.catalog_snapshot_json)); } catch { catalog = null; }\n  const pageSize = Number(session?.page_size);\n  if (!Array.isArray(catalog) || catalog.length === 0 || !Number.isSafeInteger(pageSize) || pageSize <= 0) {\n    throw new Error('INVENTORY_BUBBLE_CONTEXT_INVALID');\n  }\n  const pageCount = Math.ceil(catalog.length / pageSize);\n  if (!Number.isSafeInteger(page) || page < 1 || page > pageCount) throw new Error('INVENTORY_PAGE_INVALID');\n  const rows = catalog.slice((page - 1) * pageSize, page * pageSize);\n  const opening = !asText(session?.master_message_id)\n    && ['PREPARED', 'SEND_REQUESTED'].includes(asText(session?.status).toUpperCase())\n    && ['NONE', 'SEND_REQUESTED'].includes(asText(session?.bubble_state).toUpperCase());\n  const progress = { known: opening, counted: opening ? 0 : null, total: catalog.length };\n  const text = [\n    `Kiểm kê bia — ${escapeHtml(session.branch_id)} — ${escapeHtml(session.business_date)}`,\n    `Trang ${page}/${pageCount}`,\n    opening ? `Đã đếm: 0/${catalog.length}` : 'Tiến độ chưa được tải.',\n    ...rows.map((beer) => `${beer.stt}. ${escapeHtml(beer.ma_bia)} — ${escapeHtml(beer.ten_bia)} (${escapeHtml(beer.don_vi_dem)}) — ${opening ? 'chưa đếm' : 'chưa tải số'}`),\n  ].join('\\n');\n  if (text.length > 4000) throw new Error('INVENTORY_BUBBLE_TOO_LONG');\n  return { text, page, page_count: pageCount, rows, progress };\n}\n\nconst planned = $('Select Session Result').first()?.json ?? {}; const session = planned.session ?? {}; const action = planBubbleAction(session); if (action.action !== 'EDIT') throw new Error('INVENTORY_BUBBLE_RECONCILIATION_REQUIRED'); const rendered = renderInventoryBubble(session, { page: 1 }); return [{json: {...session, text: rendered.text}}];"
+      },
+      "id": "kkb-v2-prepare-inventory-bubble-edit",
+      "name": "Prepare Inventory Bubble Edit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{$json.chat_id}}",
+        "messageId": "={{$json.master_message_id}}",
+        "text": "={{$json.text}}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "kkb-v2-edit-inventory-bubble",
+      "name": "Edit Inventory Bubble",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3380,
+        80
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "TELEGRAM_KKB_V2"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst validMessageId = (value) => /^[1-9]\\d*$/.test(asText(value));\n\nfunction planBubbleAction(session = {}) {\n  const messageId = asText(session.master_message_id);\n  const status = asText(session.status).toUpperCase();\n  const state = asText(session.bubble_state).toUpperCase() || 'NONE';\n  if (status === 'ACTIVE' && validMessageId(messageId) && state === 'SENT') {\n    return { action: 'EDIT', message_id: messageId };\n  }\n  if (status === 'PREPARED' && state === 'NONE' && !messageId) {\n    return { action: 'MARK_SEND_REQUESTED' };\n  }\n  return { action: 'RECONCILE', error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED' };\n}\n\nfunction markSendRequested(session, now = new Date().toISOString()) {\n  if (planBubbleAction(session).action !== 'MARK_SEND_REQUESTED') {\n    throw new Error('INVENTORY_SEND_NOT_SAFE');\n  }\n  return { ...session, status: 'SEND_REQUESTED', bubble_state: 'SEND_REQUESTED', updated_at: now };\n}\n\nfunction observeTelegramSend(session, response, now = new Date().toISOString()) {\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const messageId = message?.message_id;\n  const sameChat = asText(message?.chat?.id) === asText(session?.chat_id);\n  const sameThread = asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  if (!response?.error && response?.ok !== false && asText(session?.status) === 'SEND_REQUESTED'\n    && validMessageId(messageId) && sameChat && sameThread) {\n    return {\n      ok: true,\n      can_commit: true,\n      patch: {\n        session_id: asText(session.session_id), dispatch_key: asText(session.dispatch_key),\n        master_message_id: asText(messageId), bubble_state: 'SENT', status: 'PREPARED', updated_at: now,\n      },\n    };\n  }\n  return {\n    ok: false,\n    can_commit: false,\n    error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED',\n    patch: {\n      session_id: asText(session?.session_id), dispatch_key: asText(session?.dispatch_key),\n      master_message_id: asText(session?.master_message_id),\n      bubble_state: 'RECONCILIATION_REQUIRED', status: 'RECONCILIATION_REQUIRED', updated_at: now,\n    },\n  };\n}\n\nfunction recordPinOutcome(session, response) {\n  const pinned = !response?.error && response?.ok !== false && (response === true || response?.result === true);\n  return {\n    pinned,\n    warning_code: pinned ? '' : 'INVENTORY_PIN_FAILED',\n    session: { ...session },\n  };\n}\n\nfunction observeTelegramEdit(session, response) {\n  const knownBubble = planBubbleAction(session).action === 'EDIT'\n    && asText(session?.chat_id) && asText(session?.message_thread_id);\n  const errorText = asText(response?.error?.description || response?.error?.message || response?.error || response?.description);\n  const unchanged = /^(?:Bad Request: )?message is not modified(?:: specified new message content and reply markup are exactly the same as a current content and reply markup of the message)?$/i.test(errorText);\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const sameMessage = !response?.error && response?.ok !== false\n    && asText(message?.message_id) === asText(session?.master_message_id)\n    && asText(message?.chat?.id) === asText(session?.chat_id)\n    && asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  return {\n    edit_ok: Boolean(knownBubble && (unchanged || sameMessage)),\n    session_id: asText(session?.session_id),\n    master_message_id: asText(session?.master_message_id),\n  };\n}\n\nconst escapeHtml = (value) => asText(value)\n  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\"', '&quot;');\n\nfunction renderInventoryBubble(session, { page = 1 } = {}) {\n  let catalog;\n  try { catalog = JSON.parse(asText(session?.catalog_snapshot_json)); } catch { catalog = null; }\n  const pageSize = Number(session?.page_size);\n  if (!Array.isArray(catalog) || catalog.length === 0 || !Number.isSafeInteger(pageSize) || pageSize <= 0) {\n    throw new Error('INVENTORY_BUBBLE_CONTEXT_INVALID');\n  }\n  const pageCount = Math.ceil(catalog.length / pageSize);\n  if (!Number.isSafeInteger(page) || page < 1 || page > pageCount) throw new Error('INVENTORY_PAGE_INVALID');\n  const rows = catalog.slice((page - 1) * pageSize, page * pageSize);\n  const opening = !asText(session?.master_message_id)\n    && ['PREPARED', 'SEND_REQUESTED'].includes(asText(session?.status).toUpperCase())\n    && ['NONE', 'SEND_REQUESTED'].includes(asText(session?.bubble_state).toUpperCase());\n  const progress = { known: opening, counted: opening ? 0 : null, total: catalog.length };\n  const text = [\n    `Kiểm kê bia — ${escapeHtml(session.branch_id)} — ${escapeHtml(session.business_date)}`,\n    `Trang ${page}/${pageCount}`,\n    opening ? `Đã đếm: 0/${catalog.length}` : 'Tiến độ chưa được tải.',\n    ...rows.map((beer) => `${beer.stt}. ${escapeHtml(beer.ma_bia)} — ${escapeHtml(beer.ten_bia)} (${escapeHtml(beer.don_vi_dem)}) — ${opening ? 'chưa đếm' : 'chưa tải số'}`),\n  ].join('\\n');\n  if (text.length > 4000) throw new Error('INVENTORY_BUBBLE_TOO_LONG');\n  return { text, page, page_count: pageCount, rows, progress };\n}\n\nconst session = $('Select Session Result').first()?.json?.session ?? {}; const reply = $input.first()?.json ?? {}; return [{json: observeTelegramEdit(session, reply)}];"
+      },
+      "id": "kkb-v2-verify-bubble-edit",
+      "name": "Verify Bubble Edit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3640,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.edit_ok === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-bubble-edit-succeeded-",
+      "name": "Bubble edit succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3900,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const planned = $('Select Session Result').first()?.json ?? {}; return [{json: {ok: false, status: 'ERROR', error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED', session_id: planned.session?.session_id || ''}}];"
+      },
+      "id": "kkb-v2-return-bubble-reconciliation",
+      "name": "Return Bubble Reconciliation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6240,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{!!($('Select Session Result').first()?.json?.commit_plan ?? []).some((entry) => entry.sheet === 'PHIEN_KIEM_KE' && entry.phase === 'COMMIT')}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-session-commit-required-",
+      "name": "Session commit required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3640,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.commit_plan || []).find((item) => item.sheet === 'PHIEN_KIEM_KE' && item.phase === 'COMMIT'); const bubble = $('Confirm bubble identity').first()?.json ?? {}; return entry && bubble.ready === true ? [{json: {...entry.match, ...entry.patch, master_message_id: bubble.master_message_id, bubble_state: 'SENT'}}] : [];"
+      },
+      "id": "kkb-v2-commit-phien-kiem-ke-row",
+      "name": "Commit PHIEN_KIEM_KE row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3900,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "session_id": "={{$json.session_id}}",
+            "master_message_id": "={{$json.master_message_id}}",
+            "bubble_state": "={{$json.bubble_state}}",
+            "status": "={{$json.status}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "session_id"
+          ],
+          "schema": [
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "master_message_id",
+              "displayName": "master_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bubble_state",
+              "displayName": "bubble_state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-commit-phien-kiem-ke",
+      "name": "Commit PHIEN_KIEM_KE",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3380,
+        -240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.commit_plan || []).find((item) => item.sheet === 'EVENT_LOG' && item.phase === 'COMMIT'); return entry ? [{json: {...entry.match, ...entry.patch}}] : [];"
+      },
+      "id": "kkb-v2-commit-event-log-row",
+      "name": "Commit EVENT_LOG row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3900,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "EVENT_LOG",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{$json.event_id}}",
+            "trang_thai": "={{$json.trang_thai}}"
+          },
+          "matchingColumns": [
+            "event_id"
+          ],
+          "schema": [
+            {
+              "id": "event_id",
+              "displayName": "event_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "trang_thai",
+              "displayName": "trang_thai",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-commit-event-log",
+      "name": "Commit EVENT_LOG",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3380,
+        -20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $('Select Session Result').first()?.json ?? {}; const entry = (result.commit_plan || []).find((item) => item.sheet === 'OPERATION' && item.phase === 'COMMIT'); return entry ? [{json: {...entry.match, ...entry.patch}}] : [];"
+      },
+      "id": "kkb-v2-commit-operation-row",
+      "name": "Commit OPERATION row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4420,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "OPERATION",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation_id": "={{$json.operation_id}}",
+            "status": "={{$json.status}}",
+            "actual_row_count": "={{$json.actual_row_count}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "operation_id"
+          ],
+          "schema": [
+            {
+              "id": "operation_id",
+              "displayName": "operation_id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "actual_row_count",
+              "displayName": "actual_row_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "kkb-v2-commit-operation",
+      "name": "Commit OPERATION",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3900,
+        -20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "OPERATION",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-committed-inventory-operation",
+      "name": "Read committed inventory OPERATION",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4680,
+        -20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "EVENT_LOG",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-committed-inventory-event-log",
+      "name": "Read committed inventory EVENT_LOG",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4940,
+        -20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1wQ76EpIx35Trkx5JZg8GZ0xZsEBcKAFA6eb7nKDvLu4",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "PHIEN_KIEM_KE",
+          "mode": "name"
+        },
+        "options": {
+          "returnAll": true
+        }
+      },
+      "id": "kkb-v2-read-committed-inventory-phien-kiem-ke",
+      "name": "Read committed inventory PHIEN_KIEM_KE",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        5200,
+        -20
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "GOOGLE_SHEETS_KKB_V2"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const planned = $('Select Session Result').first()?.json ?? {}; const expected = planned.operation ?? {}; const expectedSession = planned.session ?? {}; const expectedAuditId = String((planned.commit_plan || []).find((entry) => entry.sheet === 'EVENT_LOG' && entry.phase === 'COMMIT')?.match?.event_id || ''); const expectedSessionId = String((planned.commit_plan || []).find((entry) => entry.sheet === 'PHIEN_KIEM_KE' && entry.phase === 'COMMIT')?.match?.session_id || ''); const operationRows = $items('Read committed inventory OPERATION').map((item) => item.json).filter((row) => String(row.operation_id || '') === String(expected.operation_id || '')); const auditRows = $items('Read committed inventory EVENT_LOG').map((item) => item.json).filter((row) => String(row.event_id || '') === expectedAuditId); const sessionRows = expectedSessionId ? $items('Read committed inventory PHIEN_KIEM_KE').map((item) => item.json).filter((row) => String(row.session_id || '') === expectedSessionId) : []; const operation = operationRows.length === 1 ? operationRows[0] : {}; const audit = auditRows.length === 1 ? auditRows[0] : {}; const session = sessionRows.length === 1 ? sessionRows[0] : {}; const expectedCount = String(expected.expected_row_count || ''); const requiredCount = String(expectedSessionId ? 3 : 2); let sessionCommitted = !expectedSessionId; if (expectedSessionId) { const bubble = $('Confirm bubble identity').first()?.json ?? {}; sessionCommitted = bubble.ready === true && sessionRows.length === 1 && String(session.session_id || '') === String(expectedSession.session_id || '') && String(session.branch_id || '') === String(expectedSession.branch_id || '') && String(session.business_date || '') === String(expectedSession.business_date || '') && !!String(expectedSession.config_snapshot_id || '') && String(session.config_snapshot_id || '') === String(expectedSession.config_snapshot_id || '') && String(session.dispatch_key || '') === String(expectedSession.dispatch_key || '') && String(session.dispatch_key || '') === String(expected.idempotency_key || '') && /^[1-9]\\d*$/.test(String(bubble.master_message_id || '')) && String(session.master_message_id || '') === String(bubble.master_message_id || '') && String(session.bubble_state || '').toUpperCase() === 'SENT' && String(session.status || '').toUpperCase() === 'ACTIVE'; } const committed = !!expected.operation_id && !!expectedAuditId && expectedCount === requiredCount && operationRows.length === 1 && auditRows.length === 1 && sessionCommitted && String(operation.request_id || '') === String(expected.request_id || '') && String(operation.operation_type || '') === String(expected.operation_type || '') && String(operation.idempotency_key || '') === String(expected.idempotency_key || '') && String(operation.expected_row_count || '') === expectedCount && String(operation.actual_row_count || '') === expectedCount && String(operation.status || '').toUpperCase() === 'COMMITTED' && String(audit.request_id || '') === String(expected.request_id || '') && String(audit.operation_id || '') === String(expected.operation_id || '') && String(audit.trang_thai || '').toUpperCase() === 'COMMITTED'; return [{json: {committed}}];"
+      },
+      "id": "kkb-v2-verify-committed-inventory-transaction",
+      "name": "Verify committed inventory transaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5460,
+        -20
+      ],
+      "notes": "Proves the exact OPERATION and EVENT_LOG identities plus the committed PHIEN_KIEM_KE row for a three-row opening before worker-owned completion can be reported."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.committed === true}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-inventory-commit-confirmed-",
+      "name": "Inventory commit confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5460,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$('Select Session Result').first()?.json?.status === 'OPENED'}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-new-bubble-needs-pin-",
+      "name": "New bubble needs pin?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5720,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "pinChatMessage",
+        "chatId": "={{$('Confirm bubble identity').first()?.json?.chat_id}}",
+        "messageId": "={{$('Confirm bubble identity').first()?.json?.master_message_id}}",
+        "additionalFields": {
+          "disable_notification": true
+        }
+      },
+      "id": "kkb-v2-pin-inventory-bubble",
+      "name": "Pin Inventory Bubble",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5720,
+        -100
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "TELEGRAM_KKB_V2"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst validMessageId = (value) => /^[1-9]\\d*$/.test(asText(value));\n\nfunction planBubbleAction(session = {}) {\n  const messageId = asText(session.master_message_id);\n  const status = asText(session.status).toUpperCase();\n  const state = asText(session.bubble_state).toUpperCase() || 'NONE';\n  if (status === 'ACTIVE' && validMessageId(messageId) && state === 'SENT') {\n    return { action: 'EDIT', message_id: messageId };\n  }\n  if (status === 'PREPARED' && state === 'NONE' && !messageId) {\n    return { action: 'MARK_SEND_REQUESTED' };\n  }\n  return { action: 'RECONCILE', error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED' };\n}\n\nfunction markSendRequested(session, now = new Date().toISOString()) {\n  if (planBubbleAction(session).action !== 'MARK_SEND_REQUESTED') {\n    throw new Error('INVENTORY_SEND_NOT_SAFE');\n  }\n  return { ...session, status: 'SEND_REQUESTED', bubble_state: 'SEND_REQUESTED', updated_at: now };\n}\n\nfunction observeTelegramSend(session, response, now = new Date().toISOString()) {\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const messageId = message?.message_id;\n  const sameChat = asText(message?.chat?.id) === asText(session?.chat_id);\n  const sameThread = asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  if (!response?.error && response?.ok !== false && asText(session?.status) === 'SEND_REQUESTED'\n    && validMessageId(messageId) && sameChat && sameThread) {\n    return {\n      ok: true,\n      can_commit: true,\n      patch: {\n        session_id: asText(session.session_id), dispatch_key: asText(session.dispatch_key),\n        master_message_id: asText(messageId), bubble_state: 'SENT', status: 'PREPARED', updated_at: now,\n      },\n    };\n  }\n  return {\n    ok: false,\n    can_commit: false,\n    error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED',\n    patch: {\n      session_id: asText(session?.session_id), dispatch_key: asText(session?.dispatch_key),\n      master_message_id: asText(session?.master_message_id),\n      bubble_state: 'RECONCILIATION_REQUIRED', status: 'RECONCILIATION_REQUIRED', updated_at: now,\n    },\n  };\n}\n\nfunction recordPinOutcome(session, response) {\n  const pinned = !response?.error && response?.ok !== false && (response === true || response?.result === true);\n  return {\n    pinned,\n    warning_code: pinned ? '' : 'INVENTORY_PIN_FAILED',\n    session: { ...session },\n  };\n}\n\nfunction observeTelegramEdit(session, response) {\n  const knownBubble = planBubbleAction(session).action === 'EDIT'\n    && asText(session?.chat_id) && asText(session?.message_thread_id);\n  const errorText = asText(response?.error?.description || response?.error?.message || response?.error || response?.description);\n  const unchanged = /^(?:Bad Request: )?message is not modified(?:: specified new message content and reply markup are exactly the same as a current content and reply markup of the message)?$/i.test(errorText);\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const sameMessage = !response?.error && response?.ok !== false\n    && asText(message?.message_id) === asText(session?.master_message_id)\n    && asText(message?.chat?.id) === asText(session?.chat_id)\n    && asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  return {\n    edit_ok: Boolean(knownBubble && (unchanged || sameMessage)),\n    session_id: asText(session?.session_id),\n    master_message_id: asText(session?.master_message_id),\n  };\n}\n\nconst escapeHtml = (value) => asText(value)\n  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\"', '&quot;');\n\nfunction renderInventoryBubble(session, { page = 1 } = {}) {\n  let catalog;\n  try { catalog = JSON.parse(asText(session?.catalog_snapshot_json)); } catch { catalog = null; }\n  const pageSize = Number(session?.page_size);\n  if (!Array.isArray(catalog) || catalog.length === 0 || !Number.isSafeInteger(pageSize) || pageSize <= 0) {\n    throw new Error('INVENTORY_BUBBLE_CONTEXT_INVALID');\n  }\n  const pageCount = Math.ceil(catalog.length / pageSize);\n  if (!Number.isSafeInteger(page) || page < 1 || page > pageCount) throw new Error('INVENTORY_PAGE_INVALID');\n  const rows = catalog.slice((page - 1) * pageSize, page * pageSize);\n  const opening = !asText(session?.master_message_id)\n    && ['PREPARED', 'SEND_REQUESTED'].includes(asText(session?.status).toUpperCase())\n    && ['NONE', 'SEND_REQUESTED'].includes(asText(session?.bubble_state).toUpperCase());\n  const progress = { known: opening, counted: opening ? 0 : null, total: catalog.length };\n  const text = [\n    `Kiểm kê bia — ${escapeHtml(session.branch_id)} — ${escapeHtml(session.business_date)}`,\n    `Trang ${page}/${pageCount}`,\n    opening ? `Đã đếm: 0/${catalog.length}` : 'Tiến độ chưa được tải.',\n    ...rows.map((beer) => `${beer.stt}. ${escapeHtml(beer.ma_bia)} — ${escapeHtml(beer.ten_bia)} (${escapeHtml(beer.don_vi_dem)}) — ${opening ? 'chưa đếm' : 'chưa tải số'}`),\n  ].join('\\n');\n  if (text.length > 4000) throw new Error('INVENTORY_BUBBLE_TOO_LONG');\n  return { text, page, page_count: pageCount, rows, progress };\n}\n\nconst session = $('Confirm bubble identity').first()?.json ?? {}; const pin = recordPinOutcome(session, $input.first()?.json); return [{json: {session_id: session.session_id, pinned: pin.pinned, pin_warning_code: pin.warning_code}}];"
+      },
+      "id": "kkb-v2-project-inventory-pin-outcome",
+      "name": "Project Inventory Pin Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5980,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{!!$json.pin_warning_code}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kkb-v2-pin-warning-required-",
+      "name": "Pin warning required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        6240,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const planned = $('Select Session Result').first()?.json ?? {}; const gateway = $('Call Config Gateway').first()?.json ?? {}; const operation = planned.operation ?? {}; return [{json: {error: {error_code: 'INVENTORY_PIN_FAILED', retryable: false, message_key: 'INVENTORY_PIN_FAILED', message: 'INVENTORY_PIN_FAILED'}, context: {request_id: operation.request_id, operation_id: operation.operation_id, workflow: 'WF05_V2_MO_PHIEN_KIEM_KE', node: 'Pin Inventory Bubble', config_version: gateway.response?.config_version}, messages: gateway.response?.messages ?? {}, reply_target: null}}];"
+      },
+      "id": "kkb-v2-prepare-inventory-pin-warning",
+      "name": "Prepare Inventory Pin Warning",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6500,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "MoG6coBccYkIS0nK",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "kkb-v2-record-inventory-pin-warning",
+      "name": "Record Inventory Pin Warning",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        6760,
+        -220
+      ],
+      "notes": "Persist sanitized pin diagnostics in ERROR_BIA without sending another inventory bubble. A failed audit write must surface rather than be reported as persisted."
+    },
+    {
+      "parameters": {
+        "jsCode": "const asText = (value) => (value == null ? '' : String(value).trim());\nconst validMessageId = (value) => /^[1-9]\\d*$/.test(asText(value));\n\nfunction planBubbleAction(session = {}) {\n  const messageId = asText(session.master_message_id);\n  const status = asText(session.status).toUpperCase();\n  const state = asText(session.bubble_state).toUpperCase() || 'NONE';\n  if (status === 'ACTIVE' && validMessageId(messageId) && state === 'SENT') {\n    return { action: 'EDIT', message_id: messageId };\n  }\n  if (status === 'PREPARED' && state === 'NONE' && !messageId) {\n    return { action: 'MARK_SEND_REQUESTED' };\n  }\n  return { action: 'RECONCILE', error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED' };\n}\n\nfunction markSendRequested(session, now = new Date().toISOString()) {\n  if (planBubbleAction(session).action !== 'MARK_SEND_REQUESTED') {\n    throw new Error('INVENTORY_SEND_NOT_SAFE');\n  }\n  return { ...session, status: 'SEND_REQUESTED', bubble_state: 'SEND_REQUESTED', updated_at: now };\n}\n\nfunction observeTelegramSend(session, response, now = new Date().toISOString()) {\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const messageId = message?.message_id;\n  const sameChat = asText(message?.chat?.id) === asText(session?.chat_id);\n  const sameThread = asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  if (!response?.error && response?.ok !== false && asText(session?.status) === 'SEND_REQUESTED'\n    && validMessageId(messageId) && sameChat && sameThread) {\n    return {\n      ok: true,\n      can_commit: true,\n      patch: {\n        session_id: asText(session.session_id), dispatch_key: asText(session.dispatch_key),\n        master_message_id: asText(messageId), bubble_state: 'SENT', status: 'PREPARED', updated_at: now,\n      },\n    };\n  }\n  return {\n    ok: false,\n    can_commit: false,\n    error_code: 'INVENTORY_BUBBLE_RECONCILIATION_REQUIRED',\n    patch: {\n      session_id: asText(session?.session_id), dispatch_key: asText(session?.dispatch_key),\n      master_message_id: asText(session?.master_message_id),\n      bubble_state: 'RECONCILIATION_REQUIRED', status: 'RECONCILIATION_REQUIRED', updated_at: now,\n    },\n  };\n}\n\nfunction recordPinOutcome(session, response) {\n  const pinned = !response?.error && response?.ok !== false && (response === true || response?.result === true);\n  return {\n    pinned,\n    warning_code: pinned ? '' : 'INVENTORY_PIN_FAILED',\n    session: { ...session },\n  };\n}\n\nfunction observeTelegramEdit(session, response) {\n  const knownBubble = planBubbleAction(session).action === 'EDIT'\n    && asText(session?.chat_id) && asText(session?.message_thread_id);\n  const errorText = asText(response?.error?.description || response?.error?.message || response?.error || response?.description);\n  const unchanged = /^(?:Bad Request: )?message is not modified(?:: specified new message content and reply markup are exactly the same as a current content and reply markup of the message)?$/i.test(errorText);\n  const message = response?.result && typeof response.result === 'object' ? response.result : response;\n  const sameMessage = !response?.error && response?.ok !== false\n    && asText(message?.message_id) === asText(session?.master_message_id)\n    && asText(message?.chat?.id) === asText(session?.chat_id)\n    && asText(message?.message_thread_id) === asText(session?.message_thread_id);\n  return {\n    edit_ok: Boolean(knownBubble && (unchanged || sameMessage)),\n    session_id: asText(session?.session_id),\n    master_message_id: asText(session?.master_message_id),\n  };\n}\n\nconst escapeHtml = (value) => asText(value)\n  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\"', '&quot;');\n\nfunction renderInventoryBubble(session, { page = 1 } = {}) {\n  let catalog;\n  try { catalog = JSON.parse(asText(session?.catalog_snapshot_json)); } catch { catalog = null; }\n  const pageSize = Number(session?.page_size);\n  if (!Array.isArray(catalog) || catalog.length === 0 || !Number.isSafeInteger(pageSize) || pageSize <= 0) {\n    throw new Error('INVENTORY_BUBBLE_CONTEXT_INVALID');\n  }\n  const pageCount = Math.ceil(catalog.length / pageSize);\n  if (!Number.isSafeInteger(page) || page < 1 || page > pageCount) throw new Error('INVENTORY_PAGE_INVALID');\n  const rows = catalog.slice((page - 1) * pageSize, page * pageSize);\n  const opening = !asText(session?.master_message_id)\n    && ['PREPARED', 'SEND_REQUESTED'].includes(asText(session?.status).toUpperCase())\n    && ['NONE', 'SEND_REQUESTED'].includes(asText(session?.bubble_state).toUpperCase());\n  const progress = { known: opening, counted: opening ? 0 : null, total: catalog.length };\n  const text = [\n    `Kiểm kê bia — ${escapeHtml(session.branch_id)} — ${escapeHtml(session.business_date)}`,\n    `Trang ${page}/${pageCount}`,\n    opening ? `Đã đếm: 0/${catalog.length}` : 'Tiến độ chưa được tải.',\n    ...rows.map((beer) => `${beer.stt}. ${escapeHtml(beer.ma_bia)} — ${escapeHtml(beer.ten_bia)} (${escapeHtml(beer.don_vi_dem)}) — ${opening ? 'chưa đếm' : 'chưa tải số'}`),\n  ].join('\\n');\n  if (text.length > 4000) throw new Error('INVENTORY_BUBBLE_TOO_LONG');\n  return { text, page, page_count: pageCount, rows, progress };\n}\n\nconst planned = $('Select Session Result').first()?.json ?? {}; if (planned.ok !== true) return [{json: {ok: false, status: 'ERROR', error_code: planned.error_code || 'INVENTORY_SESSION_RESULT_INVALID'}}]; const session = planned.status === 'OPENED' ? ($('Confirm bubble identity').first()?.json ?? {}) : (planned.session ?? {}); const needsCommitProof = (planned.commit_plan || []).some((entry) => entry.sheet === 'OPERATION' && entry.phase === 'COMMIT'); let operationCommitted = false; if (needsCommitProof) { try { operationCommitted = $('Verify committed inventory transaction').first()?.json?.committed === true; } catch { operationCommitted = false; } } const proofRequired = planned.reply_handled === true || needsCommitProof; if (proofRequired && !operationCommitted) return [{json: {ok: false, status: 'ERROR', error_code: 'INVENTORY_COMMIT_RECONCILIATION_REQUIRED', operation_id: planned.operation?.operation_id, idempotency_key: planned.operation?.idempotency_key, reply_handled: false, operation_committed: false, reconciliation_required: true}}]; let pinResponse = null; if (planned.status === 'OPENED') { try { pinResponse = $('Pin Inventory Bubble').first()?.json ?? null; } catch {} } const pin = planned.status === 'OPENED' ? recordPinOutcome(session, pinResponse) : {pinned: null, warning_code: ''}; return [{json: {ok: true, status: planned.status, session_id: session.session_id, operation_id: planned.operation?.operation_id, idempotency_key: planned.operation?.idempotency_key, master_message_id: session.master_message_id, pin_warning_code: pin.warning_code, reply_handled: planned.reply_handled === true && operationCommitted, operation_committed: operationCommitted}}];"
+      },
+      "id": "kkb-v2-return-inventory-session-result",
+      "name": "Return Inventory Session Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6240,
+        -20
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Gateway Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Session Gateway Request": {
+      "main": [
+        [
+          {
+            "node": "Call Config Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Config Gateway": {
+      "main": [
+        [
+          {
+            "node": "Read PHIEN_KIEM_KE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PHIEN_KIEM_KE": {
+      "main": [
+        [
+          {
+            "node": "Read OPERATION for inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read OPERATION for inventory": {
+      "main": [
+        [
+          {
+            "node": "Open or Reuse Inventory Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open or Reuse Inventory Session": {
+      "main": [
+        [
+          {
+            "node": "Select Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Session Result": {
+      "main": [
+        [
+          {
+            "node": "Session write required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session write required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare OPERATION row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Inventory Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OPERATION row": {
+      "main": [
+        [
+          {
+            "node": "Prepare OPERATION",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare OPERATION": {
+      "main": [
+        [
+          {
+            "node": "New session row required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New session row required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare PHIEN_KIEM_KE row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare EVENT_LOG row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PHIEN_KIEM_KE row": {
+      "main": [
+        [
+          {
+            "node": "Prepare PHIEN_KIEM_KE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PHIEN_KIEM_KE": {
+      "main": [
+        [
+          {
+            "node": "Prepare EVENT_LOG row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare EVENT_LOG row": {
+      "main": [
+        [
+          {
+            "node": "Prepare EVENT_LOG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare EVENT_LOG": {
+      "main": [
+        [
+          {
+            "node": "Bubble action?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bubble action?": {
+      "main": [
+        [
+          {
+            "node": "Mark bubble SEND_REQUESTED row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Inventory Bubble Edit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark bubble SEND_REQUESTED row": {
+      "main": [
+        [
+          {
+            "node": "Mark bubble SEND_REQUESTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark bubble SEND_REQUESTED": {
+      "main": [
+        [
+          {
+            "node": "Read bubble marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read bubble marker": {
+      "main": [
+        [
+          {
+            "node": "Verify bubble marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify bubble marker": {
+      "main": [
+        [
+          {
+            "node": "Safe to send bubble?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safe to send bubble?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Inventory Bubble Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Bubble Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Inventory Bubble Send": {
+      "main": [
+        [
+          {
+            "node": "Send Inventory Bubble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Inventory Bubble": {
+      "main": [
+        [
+          {
+            "node": "Observe bubble send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Observe bubble send": {
+      "main": [
+        [
+          {
+            "node": "Save bubble outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save bubble outcome": {
+      "main": [
+        [
+          {
+            "node": "Read saved bubble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read saved bubble": {
+      "main": [
+        [
+          {
+            "node": "Confirm bubble identity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm bubble identity": {
+      "main": [
+        [
+          {
+            "node": "Bubble ready to commit?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bubble ready to commit?": {
+      "main": [
+        [
+          {
+            "node": "Session commit required?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Bubble Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Inventory Bubble Edit": {
+      "main": [
+        [
+          {
+            "node": "Edit Inventory Bubble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Inventory Bubble": {
+      "main": [
+        [
+          {
+            "node": "Verify Bubble Edit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Bubble Edit": {
+      "main": [
+        [
+          {
+            "node": "Bubble edit succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bubble edit succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Commit EVENT_LOG row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Bubble Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session commit required?": {
+      "main": [
+        [
+          {
+            "node": "Commit PHIEN_KIEM_KE row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Commit EVENT_LOG row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit PHIEN_KIEM_KE row": {
+      "main": [
+        [
+          {
+            "node": "Commit PHIEN_KIEM_KE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit PHIEN_KIEM_KE": {
+      "main": [
+        [
+          {
+            "node": "Commit EVENT_LOG row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit EVENT_LOG row": {
+      "main": [
+        [
+          {
+            "node": "Commit EVENT_LOG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit EVENT_LOG": {
+      "main": [
+        [
+          {
+            "node": "Commit OPERATION row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit OPERATION row": {
+      "main": [
+        [
+          {
+            "node": "Commit OPERATION",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit OPERATION": {
+      "main": [
+        [
+          {
+            "node": "Read committed inventory OPERATION",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read committed inventory OPERATION": {
+      "main": [
+        [
+          {
+            "node": "Read committed inventory EVENT_LOG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read committed inventory EVENT_LOG": {
+      "main": [
+        [
+          {
+            "node": "Read committed inventory PHIEN_KIEM_KE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read committed inventory PHIEN_KIEM_KE": {
+      "main": [
+        [
+          {
+            "node": "Verify committed inventory transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify committed inventory transaction": {
+      "main": [
+        [
+          {
+            "node": "Inventory commit confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inventory commit confirmed?": {
+      "main": [
+        [
+          {
+            "node": "New bubble needs pin?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Bubble Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New bubble needs pin?": {
+      "main": [
+        [
+          {
+            "node": "Pin Inventory Bubble",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Inventory Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pin Inventory Bubble": {
+      "main": [
+        [
+          {
+            "node": "Project Inventory Pin Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Inventory Pin Outcome": {
+      "main": [
+        [
+          {
+            "node": "Pin warning required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pin warning required?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Inventory Pin Warning",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Inventory Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Inventory Pin Warning": {
+      "main": [
+        [
+          {
+            "node": "Record Inventory Pin Warning",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Inventory Pin Warning": {
+      "main": [
+        [
+          {
+            "node": "Return Inventory Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "kkb-v2-wf05-v2-mo-phien-kiem-ke-version",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "tags": []
+}

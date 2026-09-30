@@ -1,9 +1,12 @@
-import { ALL_SHEET_DEFINITIONS, AUDIT_SHEET_NAMES, CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, ROUTER_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
+import { ALL_SHEET_DEFINITIONS, AUDIT_SHEET_NAMES, CORE_SHEET_DEFINITIONS, CORE_SHEET_NAMES, DISPATCHER_SHEET_NAMES, INVENTORY_SHEET_NAMES, ROUTER_SHEET_NAMES } from '../contracts/core-sheet-schema.mjs';
 import { sha256 } from './sha256.mjs';
 
-const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', ...ROUTER_SHEET_NAMES];
+const FINGERPRINT_SHEETS = ['CONFIG_SCHEMA', 'CONFIG_GLOBAL', 'CONFIG_BRANCH', 'CONFIG_USER', 'CONFIG_THONG_BAO', ...ROUTER_SHEET_NAMES, ...DISPATCHER_SHEET_NAMES, ...INVENTORY_SHEET_NAMES];
 const SCHEMA_DATA_TYPES = new Set(['STRING', 'INTEGER', 'NUMBER', 'BOOLEAN', 'DATE', 'DATETIME']);
 const ACTIVE = 'ACTIVE';
+const ACTIVE_COMPOSITE_IDENTITIES = Object.freeze([
+  { sheet_name: 'CONFIG_TOPIC', columns: ['branch_id', 'topic_type'] },
+]);
 const SNAPSHOT_CELL_MAX_CHARS = 49000;
 const SNAPSHOT_FORMAT = 'columnar-v1';
 const READ_ONLY_OPERATION_TYPES = new Set(['READ_STATUS', 'READ_HELP', 'COMMAND_NOT_AVAILABLE', 'ROUTE_COMMAND', 'MANUAL_RETRY']);
@@ -129,7 +132,7 @@ function requestedSheetNames(envelope) {
 
 function validateRequestedTables(tables, envelope, requested) {
   for (const sheetName of requested) {
-    if (![...ROUTER_SHEET_NAMES, ...AUDIT_SHEET_NAMES].includes(sheetName)) {
+    if (![...CORE_SHEET_NAMES, ...ROUTER_SHEET_NAMES, ...AUDIT_SHEET_NAMES, ...DISPATCHER_SHEET_NAMES, ...INVENTORY_SHEET_NAMES].includes(sheetName)) {
       return makeFailure('CONFIG_SHEET_NOT_ALLOWED', `Unsupported requested configuration sheet ${sheetName}`, envelope, { sheet_name: sheetName });
     }
     const rows = tableRows(tables, sheetName);
@@ -159,13 +162,20 @@ function parseAllowedValues(value) {
   return text.split('|').map(asText).filter(Boolean);
 }
 
-function readSchemaRules(tables, envelope, requested = []) {
+function readSchemaRules(tables, envelope, requested = [], activeSchemaVersion = '') {
   const schemaRows = tableRows(tables, 'CONFIG_SCHEMA') ?? [];
   if (schemaRows.length === 0) return { error: makeFailure('CONFIG_SCHEMA_EMPTY', 'CONFIG_SCHEMA must declare every core column before writes', envelope) };
   const rules = [];
   for (const [index, row] of schemaRows.entries()) {
     const sheetName = asText(row.sheet_name);
     const columnName = asText(row.column_name);
+    const ruleSchemaVersion = asText(row.schema_version);
+    if (activeSchemaVersion && ruleSchemaVersion !== activeSchemaVersion) {
+      return { error: makeFailure('CONFIG_SCHEMA_VERSION_MISMATCH', `Schema rule at row ${index + 2} does not match the active schema version`, envelope, {
+        sheet_name: 'CONFIG_SCHEMA', row_number: index + 2,
+        expected_schema_version: activeSchemaVersion, actual_schema_version: ruleSchemaVersion,
+      }) };
+    }
     const dataType = asText(row.data_type).toUpperCase();
     if (!ALL_SHEET_DEFINITIONS[sheetName]?.includes(columnName)) {
       return { error: makeFailure('CONFIG_SCHEMA_INVALID', `Invalid schema rule at row ${index + 2}`, envelope, { row_number: index + 2 }) };
@@ -256,6 +266,25 @@ function validateRows(tables, rules, envelope) {
       }
     }
   }
+  for (const identity of ACTIVE_COMPOSITE_IDENTITIES) {
+    const rows = tableRows(tables, identity.sheet_name) ?? [];
+    const seen = new Map();
+    for (const [index, row] of rows.entries()) {
+      if (asText(row?.trang_thai).toUpperCase() !== ACTIVE) continue;
+      const values = identity.columns.map((column) => asText(row?.[column]));
+      if (values.some(isBlank)) continue;
+      const key = JSON.stringify(values);
+      if (seen.has(key)) {
+        return makeFailure('CONFIG_DUPLICATE_KEY', `Duplicate active ${identity.sheet_name} identity`, envelope, {
+          sheet_name: identity.sheet_name,
+          key_columns: [...identity.columns],
+          first_row_number: seen.get(key) + 2,
+          row_number: index + 2,
+        });
+      }
+      seen.set(key, index);
+    }
+  }
   return null;
 }
 
@@ -342,7 +371,7 @@ function committedPredecessor(tables) {
       if (asText(row.status).toUpperCase() !== 'COMMITTED') return false;
       if (!committedOperations.has(asText(row.operation_id))) return false;
       const operationType = committedOperations.get(asText(row.operation_id));
-      return !READ_ONLY_OPERATION_TYPES.has(operationType);
+      return Boolean(operationType) && !READ_ONLY_OPERATION_TYPES.has(operationType);
     })
     .sort((left, right) => asText(left.created_at).localeCompare(asText(right.created_at)))
     .at(-1) ?? null;
@@ -438,6 +467,8 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   }
   const normalizedEnvelope = { ...envelope };
   const requested = requestedSheetNames(normalizedEnvelope);
+  const operationType = asText(envelope.payload?.intent || envelope.operation_type || (asText(envelope.payload?.command).toLowerCase().startsWith('/trangthai') ? 'READ_STATUS' : 'START_OPERATION')).toUpperCase();
+  const readOnly = ['READ_STATUS', 'READ_HELP', 'COMMAND_NOT_AVAILABLE'].includes(operationType);
   const decorateFailure = (result, { includeAudit = false } = {}) => {
     if (!result?.ok) {
       result.response = { ...(result.response ?? {}), messages };
@@ -456,7 +487,16 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const requestedError = validateRequestedTables(tables, normalizedEnvelope, requested);
   if (requestedError) return decorateFailure(requestedError);
 
-  const schemaResult = readSchemaRules(tables, normalizedEnvelope, requested);
+  const declaredConfigSheets = [...new Set((tableRows(tables, 'CONFIG_SCHEMA') ?? [])
+    .filter((row) => asText(row.trang_thai).toUpperCase() !== 'INACTIVE' && FINGERPRINT_SHEETS.includes(asText(row.sheet_name)))
+    .map((row) => asText(row.sheet_name)))];
+  if (!readOnly) {
+    const missing = declaredConfigSheets.filter((sheetName) => tableRows(tables, sheetName) === null);
+    if (missing.length) return decorateFailure(makeFailure('CONFIG_SNAPSHOT_SCOPE_INCOMPLETE', 'Declared configuration sheets were not loaded', normalizedEnvelope, { sheet_names: missing }));
+  }
+  const validationScope = readOnly ? requested : [...new Set([...requested, ...FINGERPRINT_SHEETS.filter((sheetName) => tableRows(tables, sheetName) !== null)])];
+  const activeSchemaVersion = asText(activeVersionRow(tables)?.schema_version);
+  const schemaResult = readSchemaRules(tables, normalizedEnvelope, validationScope, activeSchemaVersion);
   if (schemaResult.error) return decorateFailure(schemaResult.error);
   const rowError = validateRows(tables, schemaResult.rules, normalizedEnvelope);
   if (rowError) return decorateFailure(rowError);
@@ -476,7 +516,6 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
   const normalizedConfigJson = canonicalJson(normalizedConfig);
   const fingerprint = sha256(normalizedConfigJson);
   const predecessor = committedPredecessor(tables);
-  const operationType = asText(envelope.payload?.intent || envelope.operation_type || (asText(envelope.payload?.command).toLowerCase().startsWith('/trangthai') ? 'READ_STATUS' : 'START_OPERATION')).toUpperCase();
   const routeNeedsSnapshot = ['ROUTE_COMMAND', 'MANUAL_RETRY'].includes(operationType);
   const routerContextTables = () => contextConfigTables(tables, requested, false, operationType === 'ROUTE_COMMAND');
   const maintenanceMode = asText(versionRow.maintenance_mode).toUpperCase() || 'NO';
@@ -520,6 +559,23 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
       diagnostics: { normalized_config_json: normalizedConfigJson, reused_snapshot: snapshotMatchesCurrentConfig, read_only: true },
     };
   }
+  const snapshotBaseId = `cfg-${configVersion.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint.slice(0, 16)}`;
+  const operationId = routeNeedsSnapshot ? snapshotBaseId : asText(envelope.operation_id) || `op-${snapshotBaseId}`;
+  const operationRows = tableRows(tables, 'OPERATION') ?? [];
+  const committedOperations = new Set(operationRows
+    .filter((row) => asText(row.status).toUpperCase() === 'COMMITTED')
+    .map((row) => asText(row.operation_id)));
+  const partialSnapshot = (tableRows(tables, 'CONFIG_SNAPSHOT') ?? []).find((row) => {
+    const ownerId = asText(row.operation_id);
+    const owner = operationRows.find((operation) => asText(operation.operation_id) === ownerId);
+    if (asText(row.config_version) !== configVersion || asText(row.fingerprint) !== fingerprint) return false;
+    if (!['PREPARED', 'COMMITTED'].includes(asText(row.status).toUpperCase())) return false;
+    if (!owner || committedOperations.has(ownerId)) return false;
+    return asText(row.status).toUpperCase() === 'COMMITTED' || ownerId !== operationId;
+  });
+  if (partialSnapshot) {
+    return decorateFailure(makeFailure('CONFIG_SNAPSHOT_RECONCILIATION_REQUIRED', 'Matching configuration snapshot has not completed its operation', normalizedEnvelope));
+  }
   if (predecessor) {
     if (sameVersion && sameFingerprint) {
       return {
@@ -539,8 +595,6 @@ export function evaluateConfigGateway({ envelope = {}, tables, now = new Date().
     }));
   }
 
-  const snapshotBaseId = `cfg-${configVersion.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint.slice(0, 16)}`;
-  const operationId = routeNeedsSnapshot ? snapshotBaseId : asText(envelope.operation_id) || `op-${snapshotBaseId}`;
   const requestId = routeNeedsSnapshot ? `cfg-${configVersion}` : asText(envelope.request_id);
   const operationIdentity = {
     request_id: requestId,

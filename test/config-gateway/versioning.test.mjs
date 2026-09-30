@@ -69,6 +69,28 @@ test('ignores PREPARED snapshots when finding the accepted predecessor', () => {
   assert.equal(result.write_plan.length, 4);
 });
 
+test('refuses a snapshot whose matching operation did not commit', () => {
+  const tables = validConfig();
+  const first = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+  const snapshot = first.write_plan.find((step) => step.sheet === 'CONFIG_SNAPSHOT' && step.action === 'APPEND').row;
+  const operation = first.write_plan.find((step) => step.sheet === 'OPERATION' && step.action === 'APPEND').row;
+  tables.CONFIG_SNAPSHOT = [{ ...snapshot, status: 'COMMITTED' }];
+  tables.OPERATION = [{ ...operation, status: 'PREPARED' }];
+
+  const retried = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+  assert.equal(retried.ok, false);
+  assert.equal(retried.response.error_code, 'CONFIG_SNAPSHOT_RECONCILIATION_REQUIRED');
+  assert.deepEqual(retried.write_plan, []);
+});
+
+test('write operations cannot fingerprint only some declared config sheets', () => {
+  const tables = validConfigWithRouterTables();
+  delete tables.CONFIG_TOPIC;
+  const result = evaluateConfigGateway({ envelope: writeEnvelope, tables, now: FIXED_NOW });
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_SNAPSHOT_SCOPE_INCOMPLETE');
+});
+
 test('ignores committed snapshots without a committed operation', () => {
   const baseline = evaluateConfigGateway({ envelope: writeEnvelope, tables: validConfig(), now: FIXED_NOW });
   const tables = validConfig();

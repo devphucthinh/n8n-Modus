@@ -1,5 +1,5 @@
 {
-  "name": "WF01_V2_CONFIG_GATEWAY",
+  "name": "WF01_V2_HEARTBEAT_GATEWAY",
   "nodes": [
     {
       "parameters": {},
@@ -1023,7 +1023,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{true}}",
+              "leftValue": "={{false}}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -1043,7 +1043,7 @@
         1330,
         180
       ],
-      "notes": "Every Gateway failure is audited through WF02; caller payload cannot bypass this path."
+      "notes": "Dedicated WF04-only entry: a Gateway failure returns directly so WF04 can record its guarded FAILED heartbeat."
     },
     {
       "parameters": {
@@ -1361,40 +1361,6 @@
         3490,
         -100
       ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const result = $('Evaluate Config Gateway').first()?.json ?? {};\nconst triggerInput = $('Execute Workflow Trigger').first()?.json ?? {};\nconst envelope = triggerInput.envelope ?? triggerInput;\nreturn [{ json: {\n  error: result.response ?? result,\n  context: {\n    request_id: envelope.request_id,\n    operation_id: envelope.operation_id,\n    workflow: 'WF01_V2_CONFIG_GATEWAY',\n  },\n  reply_target: triggerInput.reply_target ?? null,\n} }];"
-      },
-      "id": "kkb-v2-prepare-error-handler-input",
-      "name": "Prepare Error Handler Input",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1570,
-        180
-      ]
-    },
-    {
-      "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "MoG6coBccYkIS0nK",
-          "mode": "id"
-        },
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "id": "kkb-v2-call-error-handler",
-      "name": "Call Error Handler",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.2,
-      "position": [
-        1810,
-        180
-      ],
-      "notes": "Bound to WF02_V2_ERROR_HANDLER in the current n8n Cloud project."
     }
   ],
   "connections": {
@@ -1829,35 +1795,7 @@
     },
     "Gateway failure safe to audit?": {
       "main": [
-        [
-          {
-            "node": "Prepare Error Handler Input",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Return Gateway Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Error Handler Input": {
-      "main": [
-        [
-          {
-            "node": "Call Error Handler",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call Error Handler": {
-      "main": [
+        null,
         [
           {
             "node": "Return Gateway Result",
@@ -1976,9 +1914,11 @@
   },
   "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromAList",
+    "callerIds": "BIND_WF04_WORKFLOW_ID_BEFORE_IMPORT"
   },
-  "versionId": "kkb-v2-wf01-v2-config-gateway-version",
+  "versionId": "kkb-v2-wf01-v2-heartbeat-gateway-version",
   "meta": {
     "templateCredsSetupCompleted": false
   },

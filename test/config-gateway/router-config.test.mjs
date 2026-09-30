@@ -53,6 +53,41 @@ test('gateway context is projected to the minimum router fields', () => {
   assert.equal(Object.values(context).some((rows) => rows.some((row) => 'normalized_config_json' in row)), false);
 });
 
+test('gateway rejects duplicate ACTIVE CONFIG_TOPIC assignments for one branch and topic type', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_TOPIC.push({
+    ...tables.CONFIG_TOPIC[0],
+    topic_id: 'topic-kiem-ke-duplicate',
+    chat_id: '-100200',
+    message_thread_id: '91',
+  });
+  const result = evaluateConfigGateway({
+    envelope: { ...envelope, payload: { intent: 'READ_STATUS', required_sheet_names: ['CONFIG_TOPIC'] } },
+    tables,
+    now: FIXED_NOW,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response.error_code, 'CONFIG_DUPLICATE_KEY');
+  assert.equal(result.response.sheet_name, 'CONFIG_TOPIC');
+  assert.deepEqual(result.response.key_columns, ['branch_id', 'topic_type']);
+});
+
+test('gateway allows distinct ACTIVE CONFIG_TOPIC types on one branch and ignores inactive duplicates', () => {
+  const tables = validConfigWithRouterTables();
+  tables.CONFIG_TOPIC.push(
+    { ...tables.CONFIG_TOPIC[0], topic_id: 'topic-other-type', topic_type: 'INVENTORY_REPORT' },
+    { ...tables.CONFIG_TOPIC[0], topic_id: 'topic-inactive-duplicate', trang_thai: 'INACTIVE' },
+  );
+  const result = evaluateConfigGateway({
+    envelope: { ...envelope, payload: { intent: 'READ_STATUS', required_sheet_names: ['CONFIG_TOPIC'] } },
+    tables,
+    now: FIXED_NOW,
+  });
+
+  assert.equal(result.ok, true);
+});
+
 test('gateway exposes only active error-alert destination keys to business command routing', () => {
   const tables = validConfigWithRouterTables();
   tables.CONFIG_GLOBAL.push(
