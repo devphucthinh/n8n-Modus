@@ -43,6 +43,16 @@ test('synthetic configuration fixture satisfies manifest values and references',
   }
 });
 
+test('CONFIG_BIA exposes the per-item count precision, step, and bounds as numeric configuration', () => {
+  const sheet = schemaManifest.sheets.find((entry) => entry.name === 'CONFIG_BIA');
+  for (const name of ['decimal_places', 'quantity_step', 'minimum_quantity', 'maximum_quantity']) {
+    const field = sheet.fields.find((entry) => entry.name === name);
+    assert.ok(field, `CONFIG_BIA.${name} exists`);
+    assert.equal(field.type, 'number', `CONFIG_BIA.${name} is numeric`);
+    assert.equal(field.required, true, `CONFIG_BIA.${name} is required`);
+  }
+});
+
 test('invoice and error references are nullable on rows that do not belong to those entities', () => {
   const field = (sheetName, fieldName) => schemaManifest.sheets.find((entry) => entry.name === sheetName).fields.find((entry) => entry.name === fieldName);
   const stateInvoice = field('STATE_CHO', 'invoice_id');

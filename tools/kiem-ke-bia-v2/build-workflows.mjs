@@ -1016,6 +1016,181 @@ return [{ json: { ok: false, status: 'ERROR', workflow_code: 'WF05', request_id:
   return workflowEnvelope(code, "Open inventory session", nodes, connections, "executeWorkflow", "Opens one branch-scoped inventory session with a frozen config/catalog snapshot and replay-safe staged writes.");
 }
 
+function makeWF06() {
+  const code = "WF06";
+  const normalizeName = "Normalize WF06 Input";
+  const gatewayName = "Call WF01 Config Gateway";
+  const gatewayGateName = "WF06 Config Ready";
+  const buildName = "Build WF06 Count Decision";
+  const planGateName = "WF06 Has Write Plan";
+  const preparedGateName = "WF06 Needs Prepared Operation";
+  const commitDecisionName = "Decide WF06 Journal Commit";
+  const commitGateName = "WF06 Commit Ready";
+  const reconcileGateName = "WF06 Should Reconcile";
+  const nodes = [executeTrigger(0)];
+  const connections = {};
+  let index = 1;
+  const gateNode = (id, name, expression) => nodeBase(id, name, "n8n-nodes-base.if", 2.2, index++, {
+    parameters: { conditions: { options: { caseSensitive: true, leftValue: "", typeValidation: "strict", version: 2 }, conditions: [{ id, leftValue: `={{${expression}}}`, rightValue: true, operator: { type: "boolean", operation: "equals" } }], combinator: "and" }, options: {} },
+  });
+
+  nodes.push(codeNode("normalize-wf06", normalizeName, index++, `${normalizeEnvelope.toString()}
+const input = $input.first()?.json ?? {};
+const source = input.envelope ?? input;
+const normalized = normalizeEnvelope(source, 'WF06');
+if (!normalized.ok) return [{ json: { ok: false, status: 'ERROR', ...normalized.error, request_id: source?.request_id ?? null, operation_id: source?.operation_id ?? null, rows: {}, should_call_wf07: false } }];
+const envelope = normalized.envelope;
+return [{ json: { envelope: { ...envelope, payload: { ...(envelope.payload ?? {}), required_sheet_names: ['CONFIG_BIA', 'CONFIG_GLOBAL', 'CONFIG_SCHEMA'] } } } }];`));
+  nodes.push(callGateway(index++));
+  nodes.push(gateNode("wf06-config-ready", gatewayGateName, `$('${gatewayName}').first()?.json?.ok === true`));
+
+  const readSheets = ["OPERATION", "PHIEN_KIEM_KE", "BIA_LOG", "STATE_CHO"];
+  for (const sheetName of readSheets) nodes.push(readSheetNode(sheetName, index++));
+
+  const journalSource = readFileSync(path.join(repoRoot, "src", "kiem-ke-bia-v2", "operation-journal.mjs"), "utf8").replace(/^export /gm, "");
+  const countSource = readFileSync(path.join(repoRoot, "src", "kiem-ke-bia-v2", "logic", "wf06-count-intake.mjs"), "utf8")
+    .replace(/^import \{ stableKey \} from ['"]\.\.\/contracts\.mjs['"];?\r?\n/m, "")
+    .replace(/^export /gm, "");
+  const buildCode = `${sha256Hex.toString()}\n${stableKey.toString()}\n${journalSource}\n${countSource}
+const normalized = $('${normalizeName}').first()?.json ?? {};
+const inputEnvelope = normalized.envelope ?? {};
+const payload = inputEnvelope.payload && typeof inputEnvelope.payload === 'object' ? inputEnvelope.payload : {};
+const gateway = $('${gatewayName}').first()?.json ?? {};
+if (gateway.ok !== true) return [{ json: { ok: false, status: 'ERROR', error_code: gateway.error_code ?? 'CONFIGURATION_UNAVAILABLE', error_class: 'CONFIGURATION', rows: {}, should_call_wf07: false } }];
+const rows = (name) => $items(name).map((item) => item.json ?? {});
+const operations = rows('Read OPERATION');
+const sessions = visibleCommittedRows(rows('Read PHIEN_KIEM_KE'), operations)
+  .filter((row) => String(row.branch_id ?? '') === String(inputEnvelope.branch_id ?? '') && String(row.status ?? '').toUpperCase() === 'ACTIVE_SESSION');
+const requestedSessionId = String(payload.session_id ?? '').trim();
+const candidates = requestedSessionId ? sessions.filter((row) => String(row.session_id ?? '') === requestedSessionId) : sessions;
+if (candidates.length !== 1) return [{ json: { ok: false, status: 'ERROR', error_code: candidates.length ? 'SESSION_AMBIGUOUS' : 'SESSION_NOT_FOUND', error_class: candidates.length ? 'CONFLICT' : 'VALIDATION', rows: {}, should_call_wf07: false } }];
+const session = candidates[0];
+const sessionState = visibleCommittedRows(rows('Read STATE_CHO'), operations).find((row) => String(row.state_id ?? '') === String(session.session_id ?? '')
+  && String(row.branch_id ?? '') === String(session.branch_id ?? '')
+  && String(row.topic_type ?? '') === 'INVENTORY_SESSION'
+  && String(row.status ?? '').toUpperCase() === 'ACTIVE_SESSION');
+if (!sessionState) return [{ json: { ok: false, status: 'ERROR', error_code: 'SESSION_STATE_INCONSISTENT', error_class: 'MANUAL_REVIEW', rows: {}, should_call_wf07: false } }];
+const committedOperationIds = new Set(operations.filter(isOperationCommitted).map((operation) => String(operation.operation_id ?? '')));
+const currentCounts = rows('Read BIA_LOG')
+  .filter((row) => String(row.session_id ?? '') === String(session.session_id ?? ''))
+  .map((row) => committedOperationIds.has(String(row.operation_id ?? ''))
+    ? row
+    : { ...row, status: 'PREPARED', write_state: 'PREPARED' });
+const workerEnvelope = { ...inputEnvelope, config_version: session.config_version ?? inputEnvelope.config_version, config_snapshot_id: session.config_snapshot_id };
+const now = new Date().toISOString();
+const decision = acceptInventoryCount({ envelope: workerEnvelope, session, currentCounts, payload, now });
+if (!decision.ok || decision.status !== 'PREPARED') return [{ json: { ...decision, workflow_code: 'WF06', worker_envelope: workerEnvelope } }];
+const prior = prepareOperation(workerEnvelope, 'WF06', now, operations);
+if (!prior.ok) return [{ json: { ok: false, status: 'ERROR', error_code: prior.error_code, error_class: 'CONFLICT', rows: {}, should_call_wf07: false } }];
+if (prior.replay && isOperationCommitted(prior.operation)) return [{ json: { ok: true, status: 'COMMITTED', replay: true, rows: {}, should_call_wf07: false, data: decision.data, operation: prior.operation, worker_envelope: workerEnvelope } }];
+const required = [...(decision.required_writes ?? [])];
+if (prior.appendPrepared) required.unshift('OPERATION_PREPARED');
+return [{ json: { ...decision, operation: prior.operation, append_prepared_operation: prior.appendPrepared, required_writes: required, worker_envelope: workerEnvelope } }];`;
+  nodes.push(codeNode("build-wf06", buildName, index++, buildCode));
+  nodes.push(gateNode("wf06-has-write-plan", planGateName, `$('${buildName}').first()?.json?.ok === true && $('${buildName}').first()?.json?.status === 'PREPARED'`));
+  nodes.push(gateNode("wf06-needs-prepared-operation", preparedGateName, `$('${buildName}').first()?.json?.append_prepared_operation === true`));
+
+  const preparedProject = codeNode("project-wf06-prepared-operation", "Project WF06 Prepared Operation", index++, `const plan = $('${buildName}').first()?.json ?? {};
+return [{ json: plan.operation ?? {} }];`);
+  const preparedWrite = writeSheetNode("OPERATION", index++, "append");
+  preparedWrite.name = "Append WF06 Prepared Operation";
+  preparedWrite.onError = "continueErrorOutput";
+  nodes.push(preparedProject, preparedWrite);
+
+  const stages = [
+    { sheet: "BIA_LOG", operation: "appendOrUpdate", id: "wf06-bia-log" },
+    { sheet: "PHIEN_KIEM_KE", operation: "appendOrUpdate", id: "wf06-session" },
+    { sheet: "STATE_CHO", operation: "appendOrUpdate", id: "wf06-state" },
+    { sheet: "EVENT_LOG", operation: "appendOrUpdate", id: "wf06-event" },
+  ];
+  for (const stage of stages) {
+    const projectName = `Project WF06 ${stage.sheet}`;
+    const gateName = `WF06 Has ${stage.sheet}`;
+    nodes.push(codeNode(`${stage.id}-project`, projectName, index++, `const plan = $('${buildName}').first()?.json ?? {};
+const row = plan.rows?.['${stage.sheet}']?.[0];
+if (!row) return [{ json: { __wf06_skip_write: true } }];
+const persisted = { ...row, status: row.status === 'PREPARED' ? 'COMMITTED' : row.status, write_state: row.write_state === 'PREPARED' ? 'COMMITTED' : row.write_state };
+return [{ json: { __wf06_skip_write: false, row: persisted } }];`));
+    nodes.push(gateNode(`${stage.id}-gate`, gateName, `$('${projectName}').first()?.json?.__wf06_skip_write === false`));
+    const writer = writeSheetNode(stage.sheet, index++, stage.operation);
+    writer.name = `${stage.operation === "append" ? "Append" : "Upsert"} WF06 ${stage.sheet}`;
+    writer.onError = "continueErrorOutput";
+    nodes.push(writer);
+  }
+
+  const businessProjectors = stages.map((stage) => `Project WF06 ${stage.sheet}`);
+  const commitDecision = codeNode("decide-wf06-commit", commitDecisionName, index++, `${sha256Hex.toString()}\n${stableKey.toString()}\n${journalSource}
+const plan = $('${buildName}').first()?.json ?? {};
+const decision = decideCommit(plan.operation, plan.required_writes ?? [], plan.required_writes ?? []);
+return [{ json: { ...decision, plan, now: new Date().toISOString() } }];`);
+  const commitGate = gateNode("wf06-commit-ready", commitGateName, `$('${commitDecisionName}').first()?.json?.ok === true && $('${commitDecisionName}').first()?.json?.committed === true`);
+  const committedProject = codeNode("project-wf06-committed-operation", "Project WF06 Committed Operation", index++, `const result = $('${commitDecisionName}').first()?.json ?? {};
+const operation = result.operation ?? {};
+return [{ json: { ...operation, status: 'COMMITTED', commit_state: 'COMMITTED', committed_at: result.now, updated_at: result.now } }];`);
+  const committedWrite = writeSheetNode("OPERATION", index++, "append");
+  committedWrite.name = "Append WF06 Committed Operation";
+  committedWrite.onError = "continueErrorOutput";
+  const reconcileGate = gateNode("wf06-should-reconcile", reconcileGateName, `$('${buildName}').first()?.json?.should_call_wf07 === true`);
+  const reconcileInput = codeNode("prepare-wf07-input", "Prepare WF07 Input", index++, `const plan = $('${buildName}').first()?.json ?? {};
+const envelope = plan.worker_envelope ?? {};
+return [{ json: { envelope: { ...envelope, event_type: 'RECONCILE_AND_CLOSE', payload: { ...(envelope.payload ?? {}), session_id: plan.data?.session_id ?? null, count_finalize_operation_id: plan.operation?.operation_id ?? null } } } }];`);
+  const reconcileCall = executeWorkflowNode("call-wf07", "Call WF07 Reconcile and Close", index++);
+  const successReturn = codeNode("return-wf06-result", "Return WF06 Result", index++, `const plan = $('${buildName}').first()?.json ?? {};
+const reconciliation = $input.first()?.json ?? {};
+return [{ json: { ok: true, status: 'COMMITTED', replay: plan.replay === true, workflow_code: 'WF06', request_id: plan.worker_envelope?.request_id ?? null, operation_id: plan.operation?.operation_id ?? null, data: plan.data ?? {}, reconciliation: reconciliation.workflow_code === 'WF07' ? reconciliation.data ?? {} : null } }];`);
+  const decisionReturn = codeNode("return-wf06-decision", "Return WF06 Decision", index++, `const result = $('${buildName}').first()?.json ?? $json;
+return [{ json: { ...result, workflow_code: 'WF06' } }];`);
+  const gatewayError = codeNode("return-wf06-gateway-error", "Return WF01 Configuration Error", index++, `const result = $('${gatewayName}').first()?.json ?? {};
+return [{ json: { ok: false, status: 'ERROR', workflow_code: 'WF06', error_code: result.error_code ?? 'CONFIGURATION_UNAVAILABLE', error_class: result.error_class ?? 'CONFIGURATION', retryable: result.retryable === true, message_safe: result.message_safe ?? 'Validated configuration is unavailable.', rows: {}, should_call_wf07: false } }];`);
+  const writeError = codeNode("return-wf06-write-error", "Return WF06 Write Failure", index++, `const plan = $('${buildName}').first()?.json ?? {};
+return [{ json: { ok: false, status: 'ERROR', workflow_code: 'WF06', error_code: 'COUNT_WRITE_FAILED', error_class: 'SYSTEM', retryable: true, message_safe: 'Count changes were not committed; retry with the same request identity.', operation_id: plan.operation?.operation_id ?? null } }];`);
+  const commitError = codeNode("return-wf06-commit-error", "Return WF06 Commit Failure", index++, `const result = $('${commitDecisionName}').first()?.json ?? {};
+return [{ json: { ok: false, status: 'ERROR', workflow_code: 'WF06', error_code: result.error_code ?? 'COUNT_COMMIT_INCOMPLETE', error_class: 'SYSTEM', retryable: true, message_safe: 'Count changes are still hidden until all required writes are committed.' } }];`);
+  nodes.push(commitDecision, commitGate, committedProject, committedWrite, reconcileGate, reconcileInput, reconcileCall, successReturn, decisionReturn, gatewayError, writeError, commitError);
+
+  connect(connections, "Execute Workflow Trigger", normalizeName);
+  connect(connections, normalizeName, gatewayName);
+  connect(connections, gatewayName, gatewayGateName);
+  connect(connections, gatewayGateName, "Read OPERATION", 0);
+  connect(connections, gatewayGateName, "Return WF01 Configuration Error", 1);
+  connect(connections, "Read OPERATION", "Read PHIEN_KIEM_KE");
+  connect(connections, "Read PHIEN_KIEM_KE", "Read BIA_LOG");
+  connect(connections, "Read BIA_LOG", "Read STATE_CHO");
+  connect(connections, "Read STATE_CHO", buildName);
+  connect(connections, buildName, planGateName);
+  connect(connections, planGateName, preparedGateName, 0);
+  connect(connections, planGateName, "Return WF06 Decision", 1);
+  connect(connections, preparedGateName, "Project WF06 Prepared Operation", 0);
+  connect(connections, preparedGateName, businessProjectors[0], 1);
+  connect(connections, "Project WF06 Prepared Operation", "Append WF06 Prepared Operation");
+  connect(connections, "Append WF06 Prepared Operation", businessProjectors[0]);
+  connect(connections, "Append WF06 Prepared Operation", "Return WF06 Write Failure", 1);
+  for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+    const stage = stages[stageIndex];
+    const projectName = businessProjectors[stageIndex];
+    const gateName = `WF06 Has ${stage.sheet}`;
+    const writeName = `${stage.operation === "append" ? "Append" : "Upsert"} WF06 ${stage.sheet}`;
+    const next = businessProjectors[stageIndex + 1] ?? commitDecisionName;
+    connect(connections, projectName, gateName);
+    connect(connections, gateName, writeName, 0);
+    connect(connections, gateName, next, 1);
+    connect(connections, writeName, next);
+    connect(connections, writeName, "Return WF06 Write Failure", 1);
+  }
+  connect(connections, commitDecisionName, commitGateName);
+  connect(connections, commitGateName, "Project WF06 Committed Operation", 0);
+  connect(connections, commitGateName, "Return WF06 Commit Failure", 1);
+  connect(connections, "Project WF06 Committed Operation", "Append WF06 Committed Operation");
+  connect(connections, "Append WF06 Committed Operation", reconcileGateName);
+  connect(connections, "Append WF06 Committed Operation", "Return WF06 Write Failure", 1);
+  connect(connections, reconcileGateName, "Prepare WF07 Input", 0);
+  connect(connections, reconcileGateName, "Return WF06 Result", 1);
+  connect(connections, "Prepare WF07 Input", "Call WF07 Reconcile and Close");
+  connect(connections, "Call WF07 Reconcile and Close", "Return WF06 Result");
+
+  return workflowEnvelope(code, "Count intake", nodes, connections, "executeWorkflow", "Validates snapshot-scoped inventory counts, stages versioned BIA_LOG writes, and invokes WF07 only after explicit finalize.");
+}
+
 function makeWF11() {
   return makeGenericWorker({
     code: "WF11",
@@ -1044,7 +1219,7 @@ const workflowFactories = {
   WF03: makeWF03,
   WF04: makeWF04,
   WF05: makeWF05,
-  WF06: () => makeGenericWorker({ code: "WF06", title: "Count intake", triggerType: "executeWorkflow", reads: ["PHIEN_KIEM_KE", "BIA_LOG", "CONFIG_BIA"], writes: ["BIA_LOG", "STATE_CHO"] }),
+  WF06: makeWF06,
   WF07: () => makeGenericWorker({ code: "WF07", title: "Reconcile and close", triggerType: "executeWorkflow", reads: ["TON_DAU_KY", "LOG_NHAP", "LOG_BAN", "BIA_LOG", "DIEU_CHINH_SO"], writes: ["BAO_CAO_NGAY"] }),
   WF08: makeWF08,
   WF09: makeWF09,

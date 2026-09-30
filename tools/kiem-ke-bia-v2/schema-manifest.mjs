@@ -112,7 +112,7 @@ function fieldMeta(name, sheetName, group, overrides = {}) {
   const privateField = /telegram|file_id|source_message|raw_payload|normalized_payload|drive_file|chat_id|thread_id/i.test(name);
   return {
     name,
-    type: inferred.type,
+    type: overrides.type ?? inferred.type,
     dataClass: privateField ? "PRIVATE" : group === "docs" ? "PUBLIC" : "INTERNAL",
     required: overrides.required ?? ["id", "_id", "operation_id", "branch_id", "business_date"].some((token) => name === token || name.endsWith(token)),
     keyType: overrides.keyType ?? (name.endsWith("_id") || name === "id" ? "PK/FK" : name.includes("idempotency") || name.includes("dispatch_key") ? "IDEMPOTENCY" : name.includes("version") || name.includes("revision") ? "VERSION" : ""),
@@ -159,7 +159,12 @@ const sheets = [
   sheet("CONFIG_PERMISSION", "config", "permission_code, permission_name, description, trang_thai, updated_by, updated_at", "Permission.", { appendOnly: false }),
   sheet("CONFIG_USER_ROLE", "config", "user_role_id, user_id, role_code, branch_id, effective_from, effective_to, trang_thai, updated_by, updated_at", "Gán user vào role/branch.", { appendOnly: false }),
   sheet("CONFIG_ROLE_PERMISSION", "config", "role_permission_id, role_code, permission_code, trang_thai, updated_by, updated_at", "Gán permission vào role.", { appendOnly: false }),
-  sheet("CONFIG_BIA", "config", "item_id, item_code, item_name, inventory_unit, tracked, ordinal, effective_from, effective_to, trang_thai, updated_by, updated_at", "Danh mục bia.", { appendOnly: false }),
+  sheet("CONFIG_BIA", "config", "item_id, item_code, item_name, inventory_unit, decimal_places, quantity_step, minimum_quantity, maximum_quantity, tracked, ordinal, effective_from, effective_to, trang_thai, updated_by, updated_at", "Danh mục bia và quy tắc số đếm theo mặt hàng.", { appendOnly: false, fieldOverrides: {
+    decimal_places: { required: true, type: "number", allowed: "non-negative integer" },
+    quantity_step: { required: true, type: "number", allowed: "positive number" },
+    minimum_quantity: { required: true, type: "number", allowed: "number; must allow zero" },
+    maximum_quantity: { required: true, type: "number", allowed: "number greater than or equal to minimum_quantity" },
+  } }),
   sheet("CONFIG_QUY_DOI", "config", "conversion_id, item_id, source_unit, target_unit, numerator, denominator, effective_from, effective_to, trang_thai, updated_by, updated_at", "Quy đổi đơn vị.", { appendOnly: false }),
   sheet("CONFIG_MAPPING_NHAP", "config", "mapping_id, source_alias, item_id, source_unit, effective_from, effective_to, trang_thai, updated_by, updated_at", "Mapping alias nhập.", { appendOnly: false }),
   sheet("CONFIG_NGUON_BAN", "config", "source_config_id, source_name, sheet_name_pattern, missing_item_policy, require_separate_approver, effective_from, effective_to, trang_thai, updated_by, updated_at", "Nguồn file bán.", { appendOnly: false }),

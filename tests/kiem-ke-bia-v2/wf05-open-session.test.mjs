@@ -28,9 +28,9 @@ const snapshot = {
 };
 
 const catalog = [
-  { item_id: 'beer-1', item_code: 'B001', item_name: 'Synthetic Lager', inventory_unit: 'bottle', tracked: true, ordinal: 1, trang_thai: 'ACTIVE' },
-  { item_id: 'beer-2', item_code: 'B002', item_name: 'Inactive Beer', inventory_unit: 'can', tracked: true, ordinal: 2, trang_thai: 'INACTIVE' },
-  { item_id: 'other-1', item_code: 'O001', item_name: 'Not Counted', inventory_unit: 'unit', tracked: false, ordinal: 3, trang_thai: 'ACTIVE' },
+  { item_id: 'beer-1', item_code: 'B001', item_name: 'Synthetic Lager', inventory_unit: 'bottle', decimal_places: 2, quantity_step: 0.25, minimum_quantity: 0, maximum_quantity: 200, tracked: true, ordinal: 1, trang_thai: 'ACTIVE' },
+  { item_id: 'beer-2', item_code: 'B002', item_name: 'Inactive Beer', inventory_unit: 'can', decimal_places: 0, quantity_step: 1, minimum_quantity: 0, maximum_quantity: 200, tracked: true, ordinal: 2, trang_thai: 'INACTIVE' },
+  { item_id: 'other-1', item_code: 'O001', item_name: 'Not Counted', inventory_unit: 'unit', decimal_places: 0, quantity_step: 1, minimum_quantity: 0, maximum_quantity: 1, tracked: false, ordinal: 3, trang_thai: 'ACTIVE' },
 ];
 
 function runCodeNode(node, namedItems, inputItems = [{ json: {} }]) {
@@ -91,6 +91,26 @@ test('WF05 stores an immutable catalog/config snapshot and omits inactive or unt
   inputCatalog[0].item_name = 'Mutated after open';
   assert.equal(JSON.parse(result.session.snapshot_json).catalog[0].item_name, 'Synthetic Lager');
   assert.deepEqual(result.data.catalog.map((item) => item.item_id), ['beer-1']);
+});
+
+test('WF05 freezes per-item count precision, step, and bounds into the session catalog snapshot', () => {
+  const rules = { decimal_places: 2, quantity_step: 0.25, minimum_quantity: 0, maximum_quantity: 200 };
+  const inputCatalog = [{ ...catalog[0], ...rules }];
+  const result = openInventorySession({
+    envelope: makeEnvelope(), activeSessions: [],
+    catalog: inputCatalog, snapshot, now,
+  });
+
+  assert.equal(result.ok, true);
+  const [item] = JSON.parse(result.session.snapshot_json).catalog;
+  assert.deepEqual({
+    decimal_places: item.decimal_places,
+    quantity_step: item.quantity_step,
+    minimum_quantity: item.minimum_quantity,
+    maximum_quantity: item.maximum_quantity,
+  }, rules);
+  inputCatalog[0].quantity_step = 5;
+  assert.equal(JSON.parse(result.session.snapshot_json).catalog[0].quantity_step, 0.25);
 });
 
 test('same-operation replay returns its session instead of conflicting with itself', () => {

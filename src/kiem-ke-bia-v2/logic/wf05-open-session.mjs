@@ -24,11 +24,16 @@ function isTrackedActiveItem(item) {
 }
 
 function projectCatalogItem(item) {
+  const configuredNumber = (value) => value != null && text(value) !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
   return {
     item_id: text(item.item_id),
     item_code: text(item.item_code),
     item_name: text(item.item_name),
     inventory_unit: text(item.inventory_unit),
+    decimal_places: configuredNumber(item.decimal_places),
+    quantity_step: configuredNumber(item.quantity_step),
+    minimum_quantity: configuredNumber(item.minimum_quantity),
+    maximum_quantity: configuredNumber(item.maximum_quantity),
     tracked: true,
     ordinal: Number.isFinite(Number(item.ordinal)) ? Number(item.ordinal) : null,
   };

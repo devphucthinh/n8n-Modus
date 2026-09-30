@@ -152,17 +152,21 @@
 - Create: src/kiem-ke-bia-v2/logic/wf06-count-intake.mjs
 - Create: tests/kiem-ke-bia-v2/wf06-count-intake.test.mjs
 - Modify: tools/kiem-ke-bia-v2/build-workflows.mjs
+- Modify: tools/kiem-ke-bia-v2/schema-manifest.mjs to add the per-item count rules already required by ADR-0015/0020.
+- Modify: src/kiem-ke-bia-v2/logic/wf05-open-session.mjs and its test/fixture so WF05 freezes those rules into the session snapshot consumed by WF06.
+- Modify: tests/kiem-ke-bia-v2/contracts.test.mjs and tests/kiem-ke-bia-v2/fixtures/configuration.mjs for the expanded CONFIG_BIA contract.
 
 **Interfaces:**
 - acceptInventoryCount({envelope,session,currentCounts,payload,now}) distinguishes zero, blank, negative, duplicate, stale revision, preview, and explicit finalize.
 
-- [ ] Add failing tests for count 0, blank, negative, configured precision bounds, and stale revision.
-- [ ] Run WF06 tests and confirm the zero/blank/negative and revision assertions fail against the scaffold.
-- [ ] Implement count validation and optimistic revision conflict decisions; rerun the focused tests.
-- [ ] Add a failing test proving an action using an expired session is rejected without writing BIA_LOG or changing state; implement the `expires_at <= now` check and rerun the focused suite while retaining historical rows.
-- [ ] Add a failing test proving preview does not commit and only an explicit finalize action closes count intake.
-- [ ] Implement explicit preview/finalize transitions with append/versioned BIA_LOG rows; rerun the suite.
-- [ ] Generate WF06 with one-execution reads, explicit config/session snapshot inputs, and a call to WF07 only after a valid finalize.
+- [x] Add failing tests for count 0, blank, negative, configured precision bounds, and stale revision.
+- [x] Run WF06 tests and confirm the zero/blank/negative and revision assertions fail against the scaffold.
+- [x] Implement count validation and optimistic revision conflict decisions; rerun the focused tests.
+- [x] Add a failing test proving an action using an expired session is rejected without writing BIA_LOG or changing state; implement the `expires_at <= now` check and rerun the focused suite while retaining historical rows.
+- [x] Add a failing test proving preview does not commit and only an explicit finalize action closes count intake.
+- [x] Implement explicit preview/finalize transitions with append/versioned BIA_LOG rows; rerun the suite.
+- [x] Generate WF06 with one-execution reads, explicit config/session snapshot inputs, and a call to WF07 only after a valid finalize.
+- [x] Cover replay after a PREPARED BIA_LOG row exists: resume the same count by `entry_id`, key-idempotently upsert BIA_LOG/EVENT_LOG, and reject changed payload or mismatched operation identity under that count key.
 
 ### Task 7: Implement WF07 Reconcile and Close
 

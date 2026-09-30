@@ -84,10 +84,10 @@ Các bước bên dưới là **thứ tự node dự kiến khi implementation**
 ### WF06 — Count Intake
 
 - **Kích hoạt / input:** Execute Workflow; session id, item/count, actor, expected revision, hành động save/preview/finalize và idempotency key.
-- **Chuỗi node:** gọi WF01 và lấy session snapshot đúng version → đọc `PHIEN_KIEM_KE`, `BIA_LOG`, state một lần mỗi sheet → xác minh session còn hạn (`expires_at > now`), quyền, item trong snapshot và revision → validate count (`0` hợp lệ; blank/âm/NaN bị từ chối) → tạo preview hoặc version count mới → khi finalize, optimistic revision check lần cuối → ghi `BIA_LOG` và cập nhật state/session → commit → nếu finalize ngày thì gọi WF07.
+- **Chuỗi node:** gọi WF01 và lấy session snapshot đúng version → đọc `PHIEN_KIEM_KE`, `BIA_LOG`, `STATE_CHO` và `OPERATION` một lần mỗi sheet → xác minh session còn hạn (`expires_at > now`), quyền, item trong snapshot và revision → validate count (`0` hợp lệ; blank/âm/NaN bị từ chối; `decimal_places`, `quantity_step`, `minimum_quantity`, `maximum_quantity` lấy từ snapshot `CONFIG_BIA`, không tự làm tròn) → tạo preview chỉ đọc hoặc version count mới trong `BIA_LOG` → khi finalize, optimistic revision check lần cuối → ghi các trạng thái phiên cần đóng và event qua operation journal → chỉ sau commit mới gọi WF07.
 - **Đọc:** `PHIEN_KIEM_KE`, `BIA_LOG`, `STATE_CHO`; danh mục qua WF01/session snapshot.
-- **Ghi:** `OPERATION`, append/version `BIA_LOG` với supersede link, cập nhật `STATE_CHO`/revision, audit event.
-- **Commit / chống trùng:** session + item + expected revision + client request; sửa count tạo version mới, không sửa ledger đã commit.
+- **Ghi:** `OPERATION`, `BIA_LOG` theo phiên bản với supersede link khi sửa count, cập nhật `STATE_CHO`/revision khi finalize, audit event. Retry cùng operation dùng upsert theo đúng khóa `entry_id`/`event_id` để phục hồi ghi dở mà không tạo bản ghi trùng.
+- **Commit / chống trùng:** session + item + expected revision + client request; nếu BIA_LOG đã có dòng PREPARED, retry giữ nguyên `entry_id` và revision, payload hoặc operation identity khác dưới cùng idempotency key bị từ chối. Sửa count nghiệp vụ phải dùng key mới và tạo version mới, không sửa một count đã commit.
 - **Thành công / lỗi:** preview/finalize trả revision mới và trạng thái còn thiếu. Revision cũ/session hết hạn là `CONFLICT`; blank/âm là `VALIDATION`; không finalize nếu count chưa hoàn tất hoặc còn lỗi.
 - **Phụ thuộc:** WF01, WF07; được WF03 gọi và WF05 mở session trước đó.
 
